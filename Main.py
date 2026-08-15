@@ -145,6 +145,8 @@ class Cue:
         self.height_px = 720
         self.width_percent = 80.0
         self.height_percent = 60.0
+        self.pos_x = None          # absolute screen position (set by Edit Mode)
+        self.pos_y = None
         self.layer = 50
         self.opacity = 1.0
         self.user_moved = False
@@ -178,7 +180,7 @@ class Cue:
         self.osc_ip = "127.0.0.1"
         self.osc_port = 8000
         self.osc_address = ""
-        self.osc_args = ""          # comma-separated string for simplicity
+        self.osc_args = ""
         self.osc_preset = "ETC EOS"
 
 
@@ -203,6 +205,8 @@ def cue_to_dict(cue):
         "height_px": cue.height_px,
         "width_percent": cue.width_percent,
         "height_percent": cue.height_percent,
+        "pos_x": cue.pos_x,
+        "pos_y": cue.pos_y,
         "layer": cue.layer,
         "opacity": cue.opacity,
         "user_moved": cue.user_moved,
@@ -244,6 +248,8 @@ def cue_from_dict(data):
     cue.height_px = data.get("height_px", 720)
     cue.width_percent = data.get("width_percent", 80.0)
     cue.height_percent = data.get("height_percent", 60.0)
+    cue.pos_x = data.get("pos_x")
+    cue.pos_y = data.get("pos_y")
     cue.layer = data.get("layer", 50)
     cue.opacity = data.get("opacity", 1.0)
     cue.user_moved = data.get("user_moved", False)
@@ -480,6 +486,7 @@ class OverlayWindow(QWidget):
         pass
 
     def apply_geometry(self, cue, screen, defaults):
+        """Restore full geometry (position + size) when user_moved is True."""
         if screen is None:
             try:
                 screen = QGuiApplication.primaryScreen()
@@ -500,8 +507,9 @@ class OverlayWindow(QWidget):
             w = max(200, int(sgeo.width()  * (cue.width_percent  / 100.0)))
             h = max(80,  int(sgeo.height() * (cue.height_percent / 100.0)))
 
-        if cue.user_moved:
-            self.resize(w, h)
+        # ---------- KEY FIX: restore absolute position when the user has moved it ----------
+        if cue.user_moved and cue.pos_x is not None and cue.pos_y is not None:
+            self.setGeometry(int(cue.pos_x), int(cue.pos_y), w, h)
         else:
             key = {
                 "Text": "text", "Image": "image", "Video": "video",
@@ -983,7 +991,7 @@ class MainWindow(QMainWindow):
 
         self.global_output_device = None
         self.available_devices = []
-        self.available_screen_names = []          # only names – never QScreen objects
+        self.available_screen_names = []
 
         self.refresh_audio_devices()
         self.refresh_screens()
@@ -1031,17 +1039,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"CueControl Windows  –  {name}")
 
     # ------------------------------------------------------------------
-    # Screen handling – completely safe (never cache QScreen objects)
+    # Screen handling – never cache live QScreen objects
     # ------------------------------------------------------------------
     def refresh_screens(self):
-        """Only store screen names. Never keep live QScreen objects."""
         try:
             self.available_screen_names = [s.name() for s in QGuiApplication.screens()]
         except RuntimeError:
             self.available_screen_names = []
 
     def check_screens(self):
-        """Safely detect display changes without holding deleted QScreen objects."""
         try:
             current_names = {s.name() for s in QGuiApplication.screens()}
         except RuntimeError:
@@ -1079,7 +1085,6 @@ class MainWindow(QMainWindow):
             self.populate_screen_combo(cue)
 
     def get_screen_by_name(self, name):
-        """Always return a live QScreen (or primary). Never cache the object."""
         try:
             screens = QGuiApplication.screens()
             if name:
@@ -1132,7 +1137,7 @@ class MainWindow(QMainWindow):
         self.screen_combo.blockSignals(False)
 
     def save_window_size_to_cue(self, cue, win):
-        """Called only when leaving Edit Mode – prevents feedback loops."""
+        """Called when leaving Edit Mode. Saves both size AND absolute position."""
         if not win or not cue:
             return
 
@@ -1150,12 +1155,18 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             return
 
+        # Size
         cue.width_px = geo.width()
         cue.height_px = geo.height()
         cue.width_percent = round(geo.width() / max(1, sgeo.width()) * 100, 1)
         cue.height_percent = round(geo.height() / max(1, sgeo.height()) * 100, 1)
+
+        # Position (the missing piece)
+        cue.pos_x = geo.x()
+        cue.pos_y = geo.y()
         cue.user_moved = True
 
+        # Capture actual screen the window is on
         try:
             handle = win.windowHandle()
             if handle is not None and handle.screen() is not None:
@@ -1164,6 +1175,7 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             pass
 
+        # Keep spinboxes in sync
         self.width_px_spin.blockSignals(True)
         self.width_px_spin.setValue(cue.width_px)
         self.width_px_spin.blockSignals(False)
@@ -1181,7 +1193,7 @@ class MainWindow(QMainWindow):
         self.height_percent_spin.blockSignals(False)
 
         self.statusBar.showMessage(
-            f"Size locked: {cue.width_px}×{cue.height_px}px on {cue.screen_name or 'primary'}"
+            f"Position locked: {cue.width_px}×{cue.height_px} @ ({cue.pos_x},{cue.pos_y}) on {cue.screen_name or 'primary'}"
         )
 
     # ------------------------------------------------------------------
@@ -2081,7 +2093,7 @@ class MainWindow(QMainWindow):
             self.osc_preset_combo.blockSignals(True)
             self.osc_preset_combo.setCurrentText(cue.osc_preset)
             self.osc_preset_combo.blockSignals(False)
-            self.on_osc_preset_changed(cue.osc_preset)  # refresh common list
+            self.on_osc_preset_changed(cue.osc_preset)
             self.osc_ip_edit.setText(cue.osc_ip)
             self.osc_port_spin.setValue(cue.osc_port)
             self.osc_address_edit.setText(cue.osc_address)
@@ -2107,7 +2119,6 @@ class MainWindow(QMainWindow):
         for cmd in preset.get("common", []):
             self.osc_common_combo.addItem(cmd["name"], cmd)
 
-        # Set recommended port
         port = preset.get("default_port", 8000)
         self.osc_port_spin.blockSignals(True)
         self.osc_port_spin.setValue(port)
@@ -2156,7 +2167,6 @@ class MainWindow(QMainWindow):
                     part = part.strip()
                     if not part:
                         continue
-                    # Try int, then float, else string
                     try:
                         if "." in part:
                             args.append(float(part))
@@ -2467,7 +2477,7 @@ class MainWindow(QMainWindow):
             win.set_edit_mode(False)
             if cue.id not in self.active_cues and not self.test_cb.isChecked():
                 self.destroy_window(cue)
-            self.statusBar.showMessage("Edit Mode OFF – size locked")
+            self.statusBar.showMessage("Edit Mode OFF – size & position locked")
 
     def align_center(self):
         cue = self.get_current_cue()
@@ -2486,14 +2496,14 @@ class MainWindow(QMainWindow):
         win.snap(edge, screen)
 
     # ------------------------------------------------------------------
-    # Playback
+    # Playback + Crossfade
     # ------------------------------------------------------------------
     def start_cue(self, cue):
         if cue.id in self.active_cues:
             self.statusBar.showMessage(f"Cue {cue.number} is already running")
             return
 
-        IMPLEMENTED_TYPES = ("Audio", "Video", "Image", "Text", "PDF", "Link", "OSC")
+        IMPLEMENTED_TYPES = ("Audio", "Video", "Image", "Text", "PDF", "Link", "OSC", "Automation")
         if cue.cue_type not in IMPLEMENTED_TYPES:
             self.statusBar.showMessage(f"{cue.cue_type} cues aren't implemented yet")
             return
@@ -2570,12 +2580,77 @@ class MainWindow(QMainWindow):
             success = self.send_osc(cue)
             if not success:
                 return
-            # OSC cues are instantaneous – we still track them briefly so they appear in Running
-            # but they auto-finish almost immediately unless duration is set.
+
+        elif cue.cue_type == "Automation":
+            name_lower = cue.name.lower()
+            if "crossfade" in name_lower:
+                self.do_crossfade()
+            elif "stop & fade" in name_lower or "stop and fade" in name_lower:
+                self.fade_and_stop()
+            elif "stop" in name_lower:
+                self.stop_all()
+            # "Start" is currently a no-op placeholder for future group start
 
         self.active_cues[cue.id] = info
         self.update_running_list()
         self.statusBar.showMessage(f"Started {cue.number} – {cue.name}")
+
+    def do_crossfade(self):
+        """Fade volume of all currently running Audio/Video cues to 0, then stop them.
+        New cues can start while the fade is in progress (true crossfade behaviour).
+        """
+        duration = self.fade_duration_ms
+        steps = max(8, duration // 50)          # ~50 ms steps
+        interval = max(10, duration // steps)
+
+        targets = []   # list of (output, start_volume)
+
+        for cid, info in list(self.active_cues.items()):
+            c = info["cue"]
+            if c.cue_type == "Audio" and info.get("output"):
+                try:
+                    targets.append((info["output"], info["output"].volume()))
+                except RuntimeError:
+                    pass
+            elif c.cue_type == "Video":
+                win = self.video_windows.get(cid)
+                if win and hasattr(win, "audio_output"):
+                    try:
+                        targets.append((win.audio_output, win.audio_output.volume()))
+                    except RuntimeError:
+                        pass
+
+        if not targets:
+            self.statusBar.showMessage("Nothing to crossfade")
+            return
+
+        # Keep a reference to the cue IDs we are fading so we can stop them later
+        fading_ids = [cid for cid, info in self.active_cues.items()
+                      if info["cue"].cue_type in ("Audio", "Video")]
+
+        step = 0
+
+        def tick():
+            nonlocal step
+            step += 1
+            factor = max(0.0, 1.0 - (step / steps))
+            for out, start_v in targets:
+                try:
+                    out.setVolume(start_v * factor)
+                except RuntimeError:
+                    pass
+
+            if step >= steps:
+                for cid in fading_ids:
+                    if cid in self.active_cues:
+                        self.stop_single_cue(cid)
+                self.statusBar.showMessage("Crossfade complete")
+                return
+
+            QTimer.singleShot(interval, tick)
+
+        self.statusBar.showMessage(f"Crossfading over {duration // 1000}s…")
+        QTimer.singleShot(interval, tick)
 
     def stop_single_cue(self, cue_id):
         if cue_id not in self.active_cues:
@@ -2639,8 +2714,10 @@ class MainWindow(QMainWindow):
         for cid, info in list(self.active_cues.items()):
             cue = info["cue"]
             elapsed = (now - info["start"]) * 1000
-            # OSC cues with no duration finish almost immediately
             if cue.cue_type == "OSC" and cue.duration_ms == 0:
+                finished.append(cid)
+                continue
+            if cue.cue_type == "Automation" and cue.duration_ms == 0:
                 finished.append(cid)
                 continue
             if cue.duration_ms > 0 and elapsed >= cue.duration_ms:
@@ -2816,7 +2893,6 @@ class MainWindow(QMainWindow):
                     break
 
     def edit_default_positions(self):
-        """Fixed: correctly pass screens and defaults to the dialog."""
         try:
             screens = QGuiApplication.screens()
         except RuntimeError:
