@@ -1,7 +1,8 @@
 # =====================================================================
 # CueControl Windows
 # Lightweight QLab-style cue system
-# Audio | Text | Image | Video | PDF | Link | OSC + Volume + Save/Load
+# Audio | Text | Image | Video | PDF | Link | OSC | Wait | Group
+# + Volume + Save/Load + Drag & Drop
 # =====================================================================
 
 import sys
@@ -133,6 +134,9 @@ class Cue:
         self.cue_type = cue_type
         self.follow_mode = follow_mode
         self.is_group = False
+        self.group_mode = "simultaneous"   # "simultaneous" | "sequence"
+        self.group_children = []           # list of child cue IDs
+        self.parent_id = None              # if this cue belongs to a group
         self.media_path = ""
         self.duration_ms = 0
         self.audio_device_id = None
@@ -145,7 +149,7 @@ class Cue:
         self.height_px = 720
         self.width_percent = 80.0
         self.height_percent = 60.0
-        self.pos_x = None          # absolute screen position (set by Edit Mode)
+        self.pos_x = None
         self.pos_y = None
         self.layer = 50
         self.opacity = 1.0
@@ -195,6 +199,9 @@ def cue_to_dict(cue):
         "cue_type": cue.cue_type,
         "follow_mode": cue.follow_mode,
         "is_group": cue.is_group,
+        "group_mode": cue.group_mode,
+        "group_children": cue.group_children,
+        "parent_id": cue.parent_id,
         "media_path": cue.media_path,
         "duration_ms": cue.duration_ms,
         "audio_device_id": cue.audio_device_id,
@@ -238,6 +245,9 @@ def cue_from_dict(data):
     cue.id = data.get("id", str(uuid.uuid4()))
     cue.follow_mode = data.get("follow_mode", "Auto-Ready")
     cue.is_group = data.get("is_group", False)
+    cue.group_mode = data.get("group_mode", "simultaneous")
+    cue.group_children = data.get("group_children", [])
+    cue.parent_id = data.get("parent_id")
     cue.media_path = data.get("media_path", "")
     cue.duration_ms = data.get("duration_ms", 0)
     cue.audio_device_id = data.get("audio_device_id")
@@ -282,16 +292,20 @@ def cue_from_dict(data):
 class CueRowWidget(QWidget):
     delete_clicked = Signal(str)
 
-    def __init__(self, cue, parent=None):
+    def __init__(self, cue, indent=0, parent=None):
         super().__init__(parent)
         self.cue_id = cue.id
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setContentsMargins(8 + indent * 28, 4, 8, 4)
         layout.setSpacing(10)
 
         num_str = str(int(cue.number)) if cue.number == int(cue.number) else f"{cue.number:.1f}"
-        text = f"{num_str}  –  {cue.name}  ({cue.cue_type})"
+        prefix = "↳  " if indent > 0 else ""
+        text = f"{prefix}{num_str}  –  {cue.name}  ({cue.cue_type})"
+
+        if cue.is_group or cue.cue_type == "Group":
+            text = f"📁 {num_str}  –  {cue.name}  [Group]"
 
         if cue.follow_mode != "Off":
             text += f"  [{cue.follow_mode}]"
@@ -307,6 +321,8 @@ class CueRowWidget(QWidget):
             text += "  [system]"
         if cue.cue_type == "OSC":
             text += f"  → {cue.osc_ip}:{cue.osc_port}"
+        if cue.cue_type == "Wait":
+            text += f"  ⏱ {cue.duration_ms/1000:.1f}s"
 
         self.label = QLabel(text)
         self.label.setStyleSheet("background: transparent; color: #ddd;")
@@ -486,7 +502,6 @@ class OverlayWindow(QWidget):
         pass
 
     def apply_geometry(self, cue, screen, defaults):
-        """Restore full geometry (position + size) when user_moved is True."""
         if screen is None:
             try:
                 screen = QGuiApplication.primaryScreen()
@@ -507,7 +522,6 @@ class OverlayWindow(QWidget):
             w = max(200, int(sgeo.width()  * (cue.width_percent  / 100.0)))
             h = max(80,  int(sgeo.height() * (cue.height_percent / 100.0)))
 
-        # ---------- KEY FIX: restore absolute position when the user has moved it ----------
         if cue.user_moved and cue.pos_x is not None and cue.pos_y is not None:
             self.setGeometry(int(cue.pos_x), int(cue.pos_y), w, h)
         else:
@@ -981,6 +995,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("CueControl Windows")
         self.setGeometry(80, 60, 1550, 920)
+        self.setAcceptDrops(True)
 
         self.cues = []
         self.active_cues = {}
@@ -1137,7 +1152,6 @@ class MainWindow(QMainWindow):
         self.screen_combo.blockSignals(False)
 
     def save_window_size_to_cue(self, cue, win):
-        """Called when leaving Edit Mode. Saves both size AND absolute position."""
         if not win or not cue:
             return
 
@@ -1155,18 +1169,15 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             return
 
-        # Size
         cue.width_px = geo.width()
         cue.height_px = geo.height()
         cue.width_percent = round(geo.width() / max(1, sgeo.width()) * 100, 1)
         cue.height_percent = round(geo.height() / max(1, sgeo.height()) * 100, 1)
 
-        # Position (the missing piece)
         cue.pos_x = geo.x()
         cue.pos_y = geo.y()
         cue.user_moved = True
 
-        # Capture actual screen the window is on
         try:
             handle = win.windowHandle()
             if handle is not None and handle.screen() is not None:
@@ -1175,7 +1186,6 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             pass
 
-        # Keep spinboxes in sync
         self.width_px_spin.blockSignals(True)
         self.width_px_spin.setValue(cue.width_px)
         self.width_px_spin.blockSignals(False)
@@ -1195,6 +1205,179 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage(
             f"Position locked: {cue.width_px}×{cue.height_px} @ ({cue.pos_x},{cue.pos_y}) on {cue.screen_name or 'primary'}"
         )
+
+    # ------------------------------------------------------------------
+    # Drag & Drop
+    # ------------------------------------------------------------------
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            self.handle_external_file_drop(event.mimeData().urls())
+            event.acceptProposedAction()
+
+    def cue_list_drag_enter(self, event):
+        if event.mimeData().hasUrls() or event.source() is self.cue_list:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def cue_list_drag_move(self, event):
+        if event.mimeData().hasUrls() or event.source() is self.cue_list:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def cue_list_drop_event(self, event):
+        # External files from Explorer
+        if event.mimeData().hasUrls():
+            self.handle_external_file_drop(event.mimeData().urls())
+            event.acceptProposedAction()
+            return
+
+        # Internal reordering / parenting
+        if event.source() is not self.cue_list:
+            event.ignore()
+            return
+
+        source_item = self.cue_list.currentItem()
+        if not source_item:
+            event.ignore()
+            return
+
+        source_id = source_item.data(Qt.ItemDataRole.UserRole)
+        source_cue = self.get_cue_by_id(source_id)
+        if not source_cue:
+            event.ignore()
+            return
+
+        pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+        target_item = self.cue_list.itemAt(pos)
+
+        if target_item is None:
+            self.reorder_cue(source_cue, None)
+            event.acceptProposedAction()
+            self.refresh_cue_list()
+            self.select_cue_by_id(source_id)
+            return
+
+        target_id = target_item.data(Qt.ItemDataRole.UserRole)
+        target_cue = self.get_cue_by_id(target_id)
+        if not target_cue or target_id == source_id:
+            event.ignore()
+            return
+
+        if target_cue.cue_type == "Group" or target_cue.is_group:
+            self.add_cue_to_group(source_cue, target_cue)
+        else:
+            self.reorder_cue(source_cue, target_cue)
+
+        event.acceptProposedAction()
+        self.refresh_cue_list()
+        self.select_cue_by_id(source_id)
+
+    def handle_external_file_drop(self, urls):
+        created = 0
+        last_id = None
+        for url in urls:
+            path = url.toLocalFile()
+            if not path or not os.path.isfile(path):
+                continue
+
+            ext = os.path.splitext(path)[1].lower()
+            name = os.path.splitext(os.path.basename(path))[0]
+            next_num = max((c.number for c in self.cues), default=0) + 1
+
+            if ext in (".mp3", ".wav", ".ogg", ".flac", ".m4a"):
+                cue = Cue(next_num, name, "Audio", "Auto-Ready")
+                cue.media_path = path
+                cue.duration_ms = self.get_audio_duration_ms(path)
+                self.cues.append(cue)
+                last_id = cue.id
+                created += 1
+
+            elif ext in (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"):
+                cue = Cue(next_num, name, "Video", "Auto-Ready")
+                cue.video_path = path
+                primary = QGuiApplication.primaryScreen()
+                if primary:
+                    cue.screen_name = primary.name()
+                self.cues.append(cue)
+                last_id = cue.id
+                created += 1
+
+            elif ext in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"):
+                cue = Cue(next_num, name, "Image", "Auto-Ready")
+                cue.image_path = path
+                cue.duration_ms = 5000
+                primary = QGuiApplication.primaryScreen()
+                if primary:
+                    cue.screen_name = primary.name()
+                self.cues.append(cue)
+                last_id = cue.id
+                created += 1
+
+            elif ext == ".pdf":
+                if not HAS_PDF:
+                    self.statusBar.showMessage("PDF support not available")
+                    continue
+                cue = Cue(next_num, name, "PDF", "Auto-Ready")
+                cue.pdf_path = path
+                primary = QGuiApplication.primaryScreen()
+                if primary:
+                    cue.screen_name = primary.name()
+                self.cues.append(cue)
+                last_id = cue.id
+                created += 1
+
+        if created:
+            self.refresh_cue_list()
+            self.statusBar.showMessage(f"Added {created} cue(s) from dropped files")
+            if last_id:
+                self.select_cue_by_id(last_id)
+
+    def reorder_cue(self, source_cue, target_cue):
+        # Remove from any group first
+        if source_cue.parent_id:
+            old_group = self.get_cue_by_id(source_cue.parent_id)
+            if old_group and source_cue.id in old_group.group_children:
+                old_group.group_children.remove(source_cue.id)
+            source_cue.parent_id = None
+
+        ordered = [c for c in sorted(self.cues, key=lambda c: c.number) if c.id != source_cue.id]
+
+        if target_cue is None:
+            ordered.append(source_cue)
+        else:
+            idx = next((i for i, c in enumerate(ordered) if c.id == target_cue.id), len(ordered))
+            ordered.insert(idx, source_cue)
+
+        for i, c in enumerate(ordered, start=1):
+            c.number = float(i)
+
+        self.cues = ordered
+        self.statusBar.showMessage(f"Moved “{source_cue.name}”")
+
+    def add_cue_to_group(self, child_cue, group_cue):
+        if child_cue.id == group_cue.id:
+            return
+        if child_cue.cue_type == "Group" or child_cue.is_group:
+            self.statusBar.showMessage("Nesting groups is not supported in this version")
+            return
+
+        # Remove from previous group if any
+        if child_cue.parent_id:
+            old_group = self.get_cue_by_id(child_cue.parent_id)
+            if old_group and child_cue.id in old_group.group_children:
+                old_group.group_children.remove(child_cue.id)
+
+        child_cue.parent_id = group_cue.id
+        if child_cue.id not in group_cue.group_children:
+            group_cue.group_children.append(child_cue.id)
+
+        self.statusBar.showMessage(f"Added “{child_cue.name}” to group “{group_cue.name}”")
 
     # ------------------------------------------------------------------
     # Save / Load
@@ -1411,6 +1594,8 @@ class MainWindow(QMainWindow):
             ("Stop & Fade", self.add_stop_fade_cue),
             ("Stop", self.add_stop_cue),
             ("Crossfade", self.add_crossfade_cue),
+            ("Wait", self.add_wait_cue),
+            ("Group", self.add_group_cue),
             ("Start", self.add_start_cue),
         ]:
             a = QAction(text, self)
@@ -1423,6 +1608,18 @@ class MainWindow(QMainWindow):
         self.cue_list = QListWidget()
         self.cue_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.cue_list.itemClicked.connect(self.on_cue_selected)
+
+        # Drag & Drop
+        self.cue_list.setDragEnabled(True)
+        self.cue_list.setAcceptDrops(True)
+        self.cue_list.setDropIndicatorShown(True)
+        self.cue_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.cue_list.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+        self.cue_list.viewport().setAcceptDrops(True)
+        self.cue_list.dropEvent = self.cue_list_drop_event
+        self.cue_list.dragEnterEvent = self.cue_list_drag_enter
+        self.cue_list.dragMoveEvent = self.cue_list_drag_move
+
         split.addWidget(self.cue_list, stretch=2)
 
         right_tabs = QTabWidget()
@@ -1828,7 +2025,7 @@ class MainWindow(QMainWindow):
 
         self.statusBar = QStatusBar()
         self.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("Ready")
+        self.statusBar.showMessage("Ready – drag files or cues to reorder / group")
 
         # Shortcuts
         for key, slot in [("Space", self.go_pressed), ("Esc", self.fade_and_stop)]:
@@ -1883,21 +2080,37 @@ class MainWindow(QMainWindow):
         settings.addAction(defaults_act)
 
     # ------------------------------------------------------------------
-    # Core list / selection
+    # Core list / selection (hierarchical)
     # ------------------------------------------------------------------
     def refresh_cue_list(self):
         current_id = self.current_cue_id
         self.cue_list.clear()
-        for cue in sorted(self.cues, key=lambda c: c.number):
+
+        top_level = [c for c in self.cues if not c.parent_id]
+        top_level.sort(key=lambda c: c.number)
+
+        def add_row(cue, indent=0):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, cue.id)
             item.setSizeHint(QSize(0, 36))
             self.cue_list.addItem(item)
-            row = CueRowWidget(cue)
+
+            row = CueRowWidget(cue, indent=indent)
             row.delete_clicked.connect(self.delete_cue_by_id)
             self.cue_list.setItemWidget(item, row)
+
             if cue.id == current_id:
                 item.setSelected(True)
+
+            if cue.is_group or cue.cue_type == "Group":
+                children = [self.get_cue_by_id(cid) for cid in cue.group_children]
+                children = [c for c in children if c]
+                children.sort(key=lambda c: c.number)
+                for child in children:
+                    add_row(child, indent=1)
+
+        for cue in top_level:
+            add_row(cue)
 
     def apply_cue_number(self):
         cue = self.get_current_cue()
@@ -1928,6 +2141,20 @@ class MainWindow(QMainWindow):
 
         if cue.id in self.active_cues:
             self.stop_single_cue(cue.id)
+
+        # Clean parent/child links
+        if cue.parent_id:
+            parent = self.get_cue_by_id(cue.parent_id)
+            if parent and cue.id in parent.group_children:
+                parent.group_children.remove(cue.id)
+
+        if cue.is_group or cue.cue_type == "Group":
+            for cid in list(cue.group_children):
+                child = self.get_cue_by_id(cid)
+                if child:
+                    child.parent_id = None
+            cue.group_children.clear()
+
         self.cues = [c for c in self.cues if c.id != cue_id]
         self.destroy_window(cue)
 
@@ -2496,14 +2723,15 @@ class MainWindow(QMainWindow):
         win.snap(edge, screen)
 
     # ------------------------------------------------------------------
-    # Playback + Crossfade
+    # Playback + Crossfade + Group + Wait
     # ------------------------------------------------------------------
     def start_cue(self, cue):
         if cue.id in self.active_cues:
             self.statusBar.showMessage(f"Cue {cue.number} is already running")
             return
 
-        IMPLEMENTED_TYPES = ("Audio", "Video", "Image", "Text", "PDF", "Link", "OSC", "Automation")
+        IMPLEMENTED_TYPES = ("Audio", "Video", "Image", "Text", "PDF", "Link", "OSC",
+                             "Automation", "Wait", "Group")
         if cue.cue_type not in IMPLEMENTED_TYPES:
             self.statusBar.showMessage(f"{cue.cue_type} cues aren't implemented yet")
             return
@@ -2581,6 +2809,23 @@ class MainWindow(QMainWindow):
             if not success:
                 return
 
+        elif cue.cue_type == "Wait":
+            # Timed pause – duration system finishes it automatically
+            pass
+
+        elif cue.cue_type == "Group":
+            children = [self.get_cue_by_id(cid) for cid in cue.group_children]
+            children = [c for c in children if c is not None]
+            children.sort(key=lambda c: c.number)
+
+            if cue.group_mode == "simultaneous":
+                for child in children:
+                    self.start_cue(child)
+            else:  # sequence
+                if children:
+                    self.start_cue(children[0])
+                    self.select_cue_by_id(children[0].id)
+
         elif cue.cue_type == "Automation":
             name_lower = cue.name.lower()
             if "crossfade" in name_lower:
@@ -2589,21 +2834,17 @@ class MainWindow(QMainWindow):
                 self.fade_and_stop()
             elif "stop" in name_lower:
                 self.stop_all()
-            # "Start" is currently a no-op placeholder for future group start
 
         self.active_cues[cue.id] = info
         self.update_running_list()
         self.statusBar.showMessage(f"Started {cue.number} – {cue.name}")
 
     def do_crossfade(self):
-        """Fade volume of all currently running Audio/Video cues to 0, then stop them.
-        New cues can start while the fade is in progress (true crossfade behaviour).
-        """
         duration = self.fade_duration_ms
-        steps = max(8, duration // 50)          # ~50 ms steps
+        steps = max(8, duration // 50)
         interval = max(10, duration // steps)
 
-        targets = []   # list of (output, start_volume)
+        targets = []
 
         for cid, info in list(self.active_cues.items()):
             c = info["cue"]
@@ -2624,7 +2865,6 @@ class MainWindow(QMainWindow):
             self.statusBar.showMessage("Nothing to crossfade")
             return
 
-        # Keep a reference to the cue IDs we are fading so we can stop them later
         fading_ids = [cid for cid, info in self.active_cues.items()
                       if info["cue"].cue_type in ("Audio", "Video")]
 
@@ -2714,10 +2954,7 @@ class MainWindow(QMainWindow):
         for cid, info in list(self.active_cues.items()):
             cue = info["cue"]
             elapsed = (now - info["start"]) * 1000
-            if cue.cue_type == "OSC" and cue.duration_ms == 0:
-                finished.append(cid)
-                continue
-            if cue.cue_type == "Automation" and cue.duration_ms == 0:
+            if cue.cue_type in ("OSC", "Automation", "Group") and cue.duration_ms == 0:
                 finished.append(cid)
                 continue
             if cue.duration_ms > 0 and elapsed >= cue.duration_ms:
@@ -2855,6 +3092,20 @@ class MainWindow(QMainWindow):
     def add_crossfade_cue(self):
         next_num = max((c.number for c in self.cues), default=0) + 1
         cue = Cue(next_num, "Crossfade", "Automation")
+        self._add_and_select(cue)
+
+    def add_wait_cue(self):
+        next_num = max((c.number for c in self.cues), default=0) + 1
+        cue = Cue(next_num, "Wait", "Wait", "Auto-Ready")
+        cue.duration_ms = 3000
+        self._add_and_select(cue)
+
+    def add_group_cue(self):
+        next_num = max((c.number for c in self.cues), default=0) + 1
+        cue = Cue(next_num, "New Group", "Group", "Auto-Ready")
+        cue.is_group = True
+        cue.group_mode = "simultaneous"
+        cue.group_children = []
         self._add_and_select(cue)
 
     def add_start_cue(self):
