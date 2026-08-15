@@ -911,9 +911,12 @@ class DefaultPositionsDialog(QDialog):
         form = QFormLayout()
         self.screen_combo = QComboBox()
         for s in screens:
-            self.screen_combo.addItem(
-                f"{s.name()}  {s.geometry().width()}×{s.geometry().height()}", s.name()
-            )
+            try:
+                self.screen_combo.addItem(
+                    f"{s.name()}  {s.geometry().width()}×{s.geometry().height()}", s.name()
+                )
+            except RuntimeError:
+                continue
         self.screen_combo.currentIndexChanged.connect(self.on_screen_changed)
         form.addRow("Display:", self.screen_combo)
 
@@ -942,7 +945,8 @@ class DefaultPositionsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-        self.on_screen_changed(0)
+        if self.screen_combo.count() > 0:
+            self.on_screen_changed(0)
 
     def on_screen_changed(self, idx):
         name = self.screen_combo.itemData(idx)
@@ -1362,7 +1366,6 @@ class MainWindow(QMainWindow):
             windows[cue.id].close_window()
             del windows[cue.id]
 
- 
     # ------------------------------------------------------------------
     def build_ui(self):
         central = QWidget()
@@ -2173,7 +2176,7 @@ class MainWindow(QMainWindow):
             return False
 
     # ------------------------------------------------------------------
-    # Property apply methods (abbreviated for length – full set retained)
+    # Property apply methods
     # ------------------------------------------------------------------
     def apply_name_change(self):
         cue = self.get_current_cue()
@@ -2466,42 +2469,6 @@ class MainWindow(QMainWindow):
                 self.destroy_window(cue)
             self.statusBar.showMessage("Edit Mode OFF – size locked")
 
-    def save_window_size_to_cue(self, cue, win):
-        if not win or not cue:
-            return
-        geo = win.geometry()
-        screen = self.get_screen_by_name(cue.screen_name) or QGuiApplication.primaryScreen()
-        if screen is None:
-            return
-        sgeo = screen.availableGeometry()
-        cue.width_px = geo.width()
-        cue.height_px = geo.height()
-        cue.width_percent = round(geo.width() / max(1, sgeo.width()) * 100, 1)
-        cue.height_percent = round(geo.height() / max(1, sgeo.height()) * 100, 1)
-        cue.user_moved = True
-
-        handle = win.windowHandle()
-        if handle is not None and handle.screen() is not None:
-            cue.screen_name = handle.screen().name()
-            self.populate_screen_combo(cue)
-
-        self.width_px_spin.blockSignals(True)
-        self.width_px_spin.setValue(cue.width_px)
-        self.width_px_spin.blockSignals(False)
-        self.height_px_spin.blockSignals(True)
-        self.height_px_spin.setValue(cue.height_px)
-        self.height_px_spin.blockSignals(False)
-        self.width_percent_spin.blockSignals(True)
-        self.width_percent_spin.setValue(cue.width_percent)
-        self.width_percent_spin.blockSignals(False)
-        self.height_percent_spin.blockSignals(True)
-        self.height_percent_spin.setValue(cue.height_percent)
-        self.height_percent_spin.blockSignals(False)
-
-        self.statusBar.showMessage(
-            f"Size locked: {cue.width_px}×{cue.height_px}px on {cue.screen_name or 'primary'}"
-        )
-
     def align_center(self):
         cue = self.get_current_cue()
         if not cue or cue.cue_type not in ("Text", "Image", "Video", "PDF", "Link"):
@@ -2688,7 +2655,7 @@ class MainWindow(QMainWindow):
         for cid in finished:
             self.stop_single_cue(cid)
 
-       # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Add cue helpers
     # ------------------------------------------------------------------
     def _add_and_select(self, cue):
@@ -2849,7 +2816,13 @@ class MainWindow(QMainWindow):
                     break
 
     def edit_default_positions(self):
-        dlg = DefaultPositionsDialog(self)
+        """Fixed: correctly pass screens and defaults to the dialog."""
+        try:
+            screens = QGuiApplication.screens()
+        except RuntimeError:
+            screens = []
+
+        dlg = DefaultPositionsDialog(screens, self.display_defaults, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             if hasattr(dlg, "pending_kind"):
                 kind = dlg.pending_kind
@@ -2891,7 +2864,8 @@ class MainWindow(QMainWindow):
         else:
             self.device_combo.setCurrentIndex(0)
         self.device_combo.blockSignals(False)
-        
+
+
 # =====================================================================
 # Application entry point
 # =====================================================================
