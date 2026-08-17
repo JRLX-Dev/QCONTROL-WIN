@@ -134,9 +134,10 @@ class Cue:
         self.cue_type = cue_type
         self.follow_mode = follow_mode
         self.is_group = False
-        self.group_mode = "simultaneous"   # "simultaneous" | "sequence"
-        self.group_children = []           # list of child cue IDs
-        self.parent_id = None              # if this cue belongs to a group
+        self.group_mode = "organizational"  # "organizational" | "timeline"
+        self.group_children = []            # list of child cue IDs
+        self.parent_id = None               # if this cue belongs to a group
+        self.timeline_offset_ms = 0         # offset from timeline group start
         self.media_path = ""
         self.duration_ms = 0
         self.audio_device_id = None
@@ -202,6 +203,7 @@ def cue_to_dict(cue):
         "group_mode": cue.group_mode,
         "group_children": cue.group_children,
         "parent_id": cue.parent_id,
+        "timeline_offset_ms": getattr(cue, "timeline_offset_ms", 0),
         "media_path": cue.media_path,
         "duration_ms": cue.duration_ms,
         "audio_device_id": cue.audio_device_id,
@@ -245,9 +247,13 @@ def cue_from_dict(data):
     cue.id = data.get("id", str(uuid.uuid4()))
     cue.follow_mode = data.get("follow_mode", "Auto-Ready")
     cue.is_group = data.get("is_group", False)
-    cue.group_mode = data.get("group_mode", "simultaneous")
+    raw_mode = data.get("group_mode", "organizational")
+    if raw_mode in ("simultaneous", "sequence"):
+        raw_mode = "organizational"
+    cue.group_mode = raw_mode if raw_mode in ("organizational", "timeline") else "organizational"
     cue.group_children = data.get("group_children", [])
     cue.parent_id = data.get("parent_id")
+    cue.timeline_offset_ms = int(data.get("timeline_offset_ms", 0) or 0)
     cue.media_path = data.get("media_path", "")
     cue.duration_ms = data.get("duration_ms", 0)
     cue.audio_device_id = data.get("audio_device_id")
@@ -305,7 +311,10 @@ class CueRowWidget(QWidget):
         text = f"{prefix}{num_str}  –  {cue.name}  ({cue.cue_type})"
 
         if cue.is_group or cue.cue_type == "Group":
-            text = f"📁 {num_str}  –  {cue.name}  [Group]"
+            mode = getattr(cue, "group_mode", "organizational")
+            text = f"📁 {num_str}  –  {cue.name}  [Group · {mode}]"
+        elif indent > 0 and getattr(cue, "timeline_offset_ms", 0):
+            text += f"  @{cue.timeline_offset_ms}ms"
 
         if cue.follow_mode != "Off":
             text += f"  [{cue.follow_mode}]"
@@ -1004,6 +1013,7 @@ class MainWindow(QMainWindow):
         self.current_show_path = None
         self._debounce_timers = {}
         self._drag_source_id = None
+        self.active_timelines = {}   # group_id -> {start, fired, group}
 
         self.global_output_device = None
         self.available_devices = []
@@ -1399,7 +1409,10 @@ class MainWindow(QMainWindow):
         child_cue.parent_id = group_cue.id
         if child_cue.id not in group_cue.group_children:
             group_cue.group_children.append(child_cue.id)
+        if not hasattr(child_cue, "timeline_offset_ms"):
+            child_cue.timeline_offset_ms = 0
 
+        self.refresh_cue_list()
         self.statusBar.showMessage(f'Added "{child_cue.name}" to group "{group_cue.name}"')
     # ------------------------------------------------------------------
     # Save / Load
@@ -2004,6 +2017,29 @@ class MainWindow(QMainWindow):
         prop_layout.addWidget(self.osc_group)
         self.osc_group.hide()
 
+        # Group / Timeline settings
+        self.group_settings_group = QGroupBox("Group / Timeline")
+        gsl = QFormLayout(self.group_settings_group)
+        self.group_mode_combo = QComboBox()
+        self.group_mode_combo.addItems(["organizational", "timeline"])
+        self.group_mode_combo.currentTextChanged.connect(self.on_group_mode_changed)
+        gsl.addRow("Group mode:", self.group_mode_combo)
+        self.timeline_offset_spin = QSpinBox()
+        self.timeline_offset_spin.setRange(0, 12 * 60 * 60 * 1000)
+        self.timeline_offset_spin.setSingleStep(100)
+        self.timeline_offset_spin.setSuffix(" ms")
+        self.timeline_offset_spin.valueChanged.connect(self.on_timeline_offset_changed)
+        gsl.addRow("Timeline offset:", self.timeline_offset_spin)
+        note_g = QLabel(
+            "organizational = GO starts first child only
+"
+            "timeline = children fire at their offsets from GO"
+        )
+        note_g.setStyleSheet("color:#aaa; font-size:11px;")
+        gsl.addRow(note_g)
+        prop_layout.addWidget(self.group_settings_group)
+        self.group_settings_group.hide()
+
         # Waveform
         self.wave_group = QGroupBox("Waveform")
         wl = QVBoxLayout(self.wave_group)
@@ -2197,7 +2233,8 @@ class MainWindow(QMainWindow):
             self.type_label.setText("-")
             for g in (self.overlay_group, self.volume_group, self.text_group,
                       self.image_group, self.video_group, self.pdf_group,
-                      self.link_group, self.osc_group, self.wave_group):
+                      self.link_group, self.osc_group, self.wave_group,
+                      self.group_settings_group):
                 g.hide()
 
         self.statusBar.showMessage(f"Deleted cue {cue.number}")
@@ -2245,6 +2282,28 @@ class MainWindow(QMainWindow):
         self.osc_group.setVisible(is_osc)
         self.wave_group.setVisible(is_audio)
         self.device_combo.setEnabled(is_audio or is_video)
+
+        is_group = cue.cue_type == "Group" or getattr(cue, "is_group", False)
+        has_timeline_parent = False
+        if cue.parent_id:
+            parent = self.get_cue_by_id(cue.parent_id)
+            if parent and getattr(parent, "group_mode", "") == "timeline":
+                has_timeline_parent = True
+        self.group_settings_group.setVisible(is_group or has_timeline_parent)
+        if is_group:
+            self.group_mode_combo.blockSignals(True)
+            self.group_mode_combo.setCurrentText(
+                getattr(cue, "group_mode", "organizational") or "organizational"
+            )
+            self.group_mode_combo.blockSignals(False)
+            self.group_mode_combo.setEnabled(True)
+            self.timeline_offset_spin.setEnabled(False)
+        elif has_timeline_parent:
+            self.group_mode_combo.setEnabled(False)
+            self.timeline_offset_spin.blockSignals(True)
+            self.timeline_offset_spin.setValue(int(getattr(cue, "timeline_offset_ms", 0)))
+            self.timeline_offset_spin.blockSignals(False)
+            self.timeline_offset_spin.setEnabled(True)
         self.file_label.setVisible(True)
 
         self.test_cb.blockSignals(True)
@@ -2852,18 +2911,7 @@ class MainWindow(QMainWindow):
             started = True
 
         elif cue.cue_type == "Group":
-            children = [self.get_cue_by_id(cid) for cid in cue.group_children]
-            children = [c for c in children if c is not None]
-            children.sort(key=lambda c: c.number)
-            if cue.group_mode == "simultaneous":
-                for child in children:
-                    self.start_cue(child)
-            else:
-                if children:
-                    self.start_cue(children[0])
-                    self.select_cue_by_id(children[0].id)
-            self.statusBar.showMessage(f"Started group {cue.number} – {cue.name}")
-            self._maybe_auto_fire(cue)
+            self.start_group_cue(cue)
             return
 
         elif cue.cue_type == "Automation":
@@ -2900,6 +2948,85 @@ class MainWindow(QMainWindow):
                 parent = self.get_cue_by_id(c.parent_id)
                 if parent is not None and c.id not in parent.group_children:
                     parent.group_children.append(c.id)
+
+
+    def start_group_cue(self, cue):
+        """Organizational = first child only. Timeline = fire by timeline_offset_ms."""
+        children = [self.get_cue_by_id(cid) for cid in getattr(cue, "group_children", [])]
+        children = [c for c in children if c is not None]
+        mode = getattr(cue, "group_mode", "organizational") or "organizational"
+
+        if mode == "timeline":
+            children.sort(key=lambda c: getattr(c, "timeline_offset_ms", 0))
+            self.active_timelines[cue.id] = {
+                "start": time.time(),
+                "fired": set(),
+                "group": cue,
+            }
+            for child in children:
+                if getattr(child, "timeline_offset_ms", 0) <= 0:
+                    self.active_timelines[cue.id]["fired"].add(child.id)
+                    self.start_cue(child)
+            self.statusBar.showMessage(f"Timeline {cue.number} – {cue.name} started")
+        else:
+            children.sort(key=lambda c: c.number)
+            if children:
+                self.start_cue(children[0])
+                self.select_cue_by_id(children[0].id)
+            self.statusBar.showMessage(
+                f"Group {cue.number} – {cue.name} (organizational)"
+            )
+
+        self._maybe_auto_fire(cue)
+
+    def tick_timelines(self):
+        """Fire timeline-group children whose offset has been reached."""
+        if not getattr(self, "active_timelines", None):
+            return
+        now = time.time()
+        finished = []
+        for gid, state in list(self.active_timelines.items()):
+            group = state.get("group") or self.get_cue_by_id(gid)
+            if group is None:
+                finished.append(gid)
+                continue
+            elapsed_ms = (now - state["start"]) * 1000.0
+            children = [self.get_cue_by_id(cid) for cid in group.group_children]
+            children = [c for c in children if c is not None]
+            all_fired = True
+            for child in children:
+                if child.id in state["fired"]:
+                    continue
+                if getattr(child, "timeline_offset_ms", 0) <= elapsed_ms:
+                    state["fired"].add(child.id)
+                    self.start_cue(child)
+                else:
+                    all_fired = False
+            if all_fired:
+                still_running = any(cid in self.active_cues for cid in group.group_children)
+                if not still_running:
+                    finished.append(gid)
+        for gid in finished:
+            self.active_timelines.pop(gid, None)
+
+    def clear_timelines(self):
+        if hasattr(self, "active_timelines"):
+            self.active_timelines.clear()
+
+    def on_group_mode_changed(self, text):
+        cue = self.get_current_cue()
+        if cue and (cue.cue_type == "Group" or getattr(cue, "is_group", False)):
+            cue.group_mode = text
+            self.refresh_cue_list()
+            self.statusBar.showMessage(f"Group mode → {text}")
+
+    def on_timeline_offset_changed(self, value):
+        cue = self.get_current_cue()
+        if cue is None:
+            return
+        cue.timeline_offset_ms = int(value)
+        self.refresh_cue_list()
+        self.statusBar.showMessage(f"Timeline offset {cue.number} → {value} ms")
 
     def cue_list_mouse_press(self, event):
         """Capture which cue is being dragged before selection can change."""
@@ -3013,6 +3140,7 @@ class MainWindow(QMainWindow):
                 pass
 
     def stop_all(self):
+        self.clear_timelines()
         for cid in list(self.active_cues.keys()):
             self.stop_single_cue(cid)
 
@@ -3069,6 +3197,8 @@ class MainWindow(QMainWindow):
                     self.select_cue_by_id(nxt.id)
                     self.start_cue(nxt)
 
+        self.tick_timelines()
+
     def _add_and_select(self, cue):
         self.cues.append(cue)
         self.select_cue_by_id(cue.id)
@@ -3087,7 +3217,15 @@ class MainWindow(QMainWindow):
         cue = Cue(next_num, name, "Audio", "Auto-Ready")
         cue.media_path = path
         cue.duration_ms = self.get_audio_duration_ms(path)
-       
+        self._add_and_select(cue)
+
+    def get_audio_duration_ms(self, path):
+        try:
+            info = sf.info(path)
+            return int(info.frames / info.samplerate * 1000)
+        except Exception:
+            return 0
+
     def add_video_cue(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Video", "", "Video (*.mp4 *.mov *.mkv *.avi *.webm *.m4v)"
@@ -3193,7 +3331,7 @@ class MainWindow(QMainWindow):
         next_num = max((c.number for c in self.cues), default=0) + 1
         cue = Cue(next_num, "New Group", "Group", "Auto-Ready")
         cue.is_group = True
-        cue.group_mode = "simultaneous"
+        cue.group_mode = "organizational"
         cue.group_children = []
         self._add_and_select(cue)
 
