@@ -66,6 +66,19 @@ Or without activating the venv:
 & ".\.venv\Scripts\python.exe" ".\Main.py"
 ```
 
+### Click-to-go kit (when you hand someone a drive)
+
+Put `Run CueControl.bat` next to `Main.py`:
+
+```bat
+@echo off
+cd /d "%~dp0"
+".venv\Scripts\python.exe" "Main.py"
+if errorlevel 1 pause
+```
+
+Operator: open the folder → double-click **Run CueControl.bat**.
+
 ### First launch checklist
 
 1. Confirm the main window opens and the status bar shows Ready.
@@ -157,6 +170,36 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 
 ---
 
+## Distribution workflow (Alpha)
+
+Two hardware tiers. Same `Main.py` version on both.
+
+| Tier | Device | What’s on it | Who |
+|------|--------|--------------|-----|
+| Software-only | USB flash | App + `.venv` + `.bat` | First-look testers; media stays on the house PC |
+| Basic kit | 250 GB NVMe in USB-C enclosure | App + sample 1080p + `Shows\` | Batch-cloned via Sabrent dock |
+| Super-test kit | USB-C SSD | Full stack + their media | Multi-display, groups, OSC, real dry runs |
+
+**Clone process (basic kits)**
+
+1. Build one master NVMe (NTFS): `CueControl\` with `Main.py`, `.venv`, `Run CueControl.bat`, `Media\`, `Shows\`.
+2. Smoke-test from that drive.
+3. Offline-clone to same-size or larger 250 GB targets.
+4. Spot-check one drive per batch.
+
+**Future — launch updater (not built yet)**
+
+- `Run CueControl.bat` will call a small script that compares local `VERSION.txt` to GitHub `main`.
+- If the repo is newer, download **only** `Main.py` (and `VERSION.txt`), then start the app.
+- If offline or GitHub fails, start the local copy (fail open).
+- Never auto-update `.venv` from the stick.
+- Requires a **public** repo (or a later release zip). Do not bake tokens into tester drives.
+- Updates run at launch only, never mid-show.
+
+When this ships: bump `VERSION.txt` every tester-facing `Main.py` push, then clones pick it up on next networked launch.
+
+---
+
 ## Troubleshooting
 
 | Symptom | What to try |
@@ -177,6 +220,7 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 - No packaged `.exe` installer yet
 - Nested groups not supported
 - Media paths not yet relative/portable by default
+- Launch updater (GitHub `VERSION.txt`) not implemented yet
 
 ---
 
