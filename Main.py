@@ -1294,7 +1294,6 @@ class MainWindow(QMainWindow):
         self.refresh_cue_list()
         self.select_cue_by_id(source_id)
         self._drag_source_id = None
-
     def handle_external_file_drop(self, urls):
         created = 0
         last_id = None
@@ -1376,7 +1375,10 @@ class MainWindow(QMainWindow):
         if target_cue is None:
             source_cue.number = others[-1].number + 1.0
         else:
-            idx = next((i for i, c in enumerate(others) if c.id == target_cue.id), len(others))
+            idx = next(
+                (i for i, c in enumerate(others) if c.id == target_cue.id),
+                len(others),
+            )
             prev_num = others[idx - 1].number if idx > 0 else 0.0
             next_num = others[idx].number if idx < len(others) else prev_num + 2.0
             gap = next_num - prev_num
@@ -1392,7 +1394,6 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage(
             f'Moved "{source_cue.name}" → cue {source_cue.number}'
         )
-
     def add_cue_to_group(self, child_cue, group_cue):
         if child_cue.id == group_cue.id:
             return
@@ -2017,7 +2018,7 @@ class MainWindow(QMainWindow):
         prop_layout.addWidget(self.osc_group)
         self.osc_group.hide()
 
-        # Group / Timeline settings
+               # Group / Timeline settings
         self.group_settings_group = QGroupBox("Group / Timeline")
         gsl = QFormLayout(self.group_settings_group)
         self.group_mode_combo = QComboBox()
@@ -2031,10 +2032,13 @@ class MainWindow(QMainWindow):
         self.timeline_offset_spin.valueChanged.connect(self.on_timeline_offset_changed)
         gsl.addRow("Timeline offset:", self.timeline_offset_spin)
         note_g = QLabel(
-            "organizational = GO starts first child only
-"
+            "organizational = GO starts first child only\n"
             "timeline = children fire at their offsets from GO"
         )
+        note_g.setStyleSheet("color:#aaa; font-size:11px;")
+        gsl.addRow(note_g)
+        prop_layout.addWidget(self.group_settings_group)
+        self.group_settings_group.hide()
         note_g.setStyleSheet("color:#aaa; font-size:11px;")
         gsl.addRow(note_g)
         prop_layout.addWidget(self.group_settings_group)
@@ -2061,23 +2065,78 @@ class MainWindow(QMainWindow):
         split.addWidget(right_tabs, stretch=1)
         content.addLayout(split)
 
-        # GO / STOP bar
+        # GO / STOP bar – equal-width rounded controls
         bar = QFrame()
-        bar.setFrameShape(QFrame.StyledPanel)
-        bar.setFixedHeight(80)
+        bar.setObjectName("transportBar")
+        bar.setFixedHeight(88)
+        bar.setStyleSheet("""
+            QFrame#transportBar {
+                background-color: #1a1a1a;
+                border-top: 1px solid #444;
+            }
+        """)
         bl = QHBoxLayout(bar)
+        bl.setContentsMargins(12, 10, 12, 10)
+        bl.setSpacing(12)
+
+        btn_base = """
+            QPushButton {
+                color: white;
+                font-size: 18px;
+                font-weight: bold;
+                border: none;
+                border-radius: 12px;
+                padding: 14px 20px;
+                min-height: 56px;
+            }
+            QPushButton:pressed {
+                padding-top: 16px;
+                padding-bottom: 12px;
+            }
+        """
+
         self.go_btn = QPushButton("GO")
-        self.go_btn.setStyleSheet(
-            "background-color:#00AA00; color:white; font-size:24px; font-weight:bold; padding:15px;"
-        )
+        self.go_btn.setStyleSheet(btn_base + """
+            QPushButton {
+                background-color: #00AA00;
+            }
+            QPushButton:hover {
+                background-color: #00CC22;
+            }
+            QPushButton:pressed {
+                background-color: #008800;
+            }
+        """)
         self.go_btn.clicked.connect(self.go_pressed)
+
         self.stop_btn = QPushButton("STOP ALL")
-        self.stop_btn.setStyleSheet(
-            "background-color:#CC0000; color:white; font-size:18px; padding:12px;"
-        )
+        self.stop_btn.setStyleSheet(btn_base + """
+            QPushButton {
+                background-color: #CC0000;
+            }
+            QPushButton:hover {
+                background-color: #EE2222;
+            }
+            QPushButton:pressed {
+                background-color: #990000;
+            }
+        """)
         self.stop_btn.clicked.connect(self.stop_all)
-        self.fade_btn = QPushButton("Fade && Stop")
+
+        self.fade_btn = QPushButton("Fade & Stop")
+        self.fade_btn.setStyleSheet(btn_base + """
+            QPushButton {
+                background-color: #CC7700;
+            }
+            QPushButton:hover {
+                background-color: #EE9900;
+            }
+            QPushButton:pressed {
+                background-color: #AA5500;
+            }
+        """)
         self.fade_btn.clicked.connect(self.fade_and_stop)
+
         bl.addWidget(self.go_btn, 1)
         bl.addWidget(self.stop_btn, 1)
         bl.addWidget(self.fade_btn, 1)
@@ -2809,6 +2868,7 @@ class MainWindow(QMainWindow):
         win.snap(edge, screen)
 
        # ------------------------------------------------------------------
+       # ------------------------------------------------------------------
     # Playback + Crossfade + Group + Wait
     # ------------------------------------------------------------------
     def start_cue(self, cue):
@@ -2829,12 +2889,16 @@ class MainWindow(QMainWindow):
 
         if cue.cue_type == "Audio":
             if not cue.media_path or not os.path.exists(cue.media_path):
-                self.statusBar.showMessage(f"Audio file missing: {cue.media_path or '(none)'}")
+                self.statusBar.showMessage(
+                    f"Audio file missing: {cue.media_path or '(none)'}"
+                )
                 return
             player, output = self.create_player(cue)
+
             def on_status(status):
                 if status == QMediaPlayer.MediaStatus.LoadedMedia:
                     player.play()
+
             player.mediaStatusChanged.connect(on_status)
             player.setSource(QUrl.fromLocalFile(cue.media_path))
             info["player"] = player
@@ -2849,14 +2913,18 @@ class MainWindow(QMainWindow):
 
         elif cue.cue_type == "Image":
             if not cue.image_path or not os.path.exists(cue.image_path):
-                self.statusBar.showMessage(f"Image file missing: {cue.image_path or '(none)'}")
+                self.statusBar.showMessage(
+                    f"Image file missing: {cue.image_path or '(none)'}"
+                )
                 return
             if cue.image_persistent:
                 for other_id, other_info in list(self.active_cues.items()):
                     other_cue = other_info["cue"]
-                    if (other_cue.cue_type == "Image" and
-                            other_cue.image_persistent and
-                            other_id != cue.id):
+                    if (
+                        other_cue.cue_type == "Image"
+                        and other_cue.image_persistent
+                        and other_id != cue.id
+                    ):
                         self.stop_single_cue(other_id)
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
@@ -2865,7 +2933,9 @@ class MainWindow(QMainWindow):
 
         elif cue.cue_type == "Video":
             if not cue.video_path or not os.path.exists(cue.video_path):
-                self.statusBar.showMessage(f"Video file missing: {cue.video_path or '(none)'}")
+                self.statusBar.showMessage(
+                    f"Video file missing: {cue.video_path or '(none)'}"
+                )
                 return
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
@@ -2875,7 +2945,9 @@ class MainWindow(QMainWindow):
 
         elif cue.cue_type == "PDF":
             if not cue.pdf_path or not os.path.exists(cue.pdf_path):
-                self.statusBar.showMessage(f"PDF file missing: {cue.pdf_path or '(none)'}")
+                self.statusBar.showMessage(
+                    f"PDF file missing: {cue.pdf_path or '(none)'}"
+                )
                 return
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
@@ -2948,7 +3020,6 @@ class MainWindow(QMainWindow):
                 parent = self.get_cue_by_id(c.parent_id)
                 if parent is not None and c.id not in parent.group_children:
                     parent.group_children.append(c.id)
-
 
     def start_group_cue(self, cue):
         """Organizational = first child only. Timeline = fire by timeline_offset_ms."""
@@ -3054,7 +3125,6 @@ class MainWindow(QMainWindow):
         if idx + 1 < len(ordered):
             return ordered[idx + 1]
         return None
-
     def do_crossfade(self):
         duration = self.fade_duration_ms
         steps = max(8, duration // 50)
@@ -3169,6 +3239,14 @@ class MainWindow(QMainWindow):
         finished = []
         for cid, info in list(self.active_cues.items()):
             cue = info["cue"]
+        elapsed = (now - info["start"]) * 1000
+
+    def update_running_list(self):
+        self.running_list.clear()
+        now = time.time()
+        finished = []
+        for cid, info in list(self.active_cues.items()):
+            cue = info["cue"]
             elapsed = (now - info["start"]) * 1000
 
             # Instant types finish immediately when duration is 0
@@ -3182,7 +3260,10 @@ class MainWindow(QMainWindow):
 
             if cue.duration_ms > 0:
                 remaining = max(0, cue.duration_ms - elapsed)
-                t = f"{int(remaining // 60000):02d}:{int((remaining % 60000) // 1000):02d}"
+                t = (
+                    f"{int(remaining // 60000):02d}:"
+                    f"{int((remaining % 60000) // 1000):02d}"
+                )
             else:
                 t = "∞"
             self.running_list.addItem(f"▶ {cue.number} - {cue.name}   [{t}]")
