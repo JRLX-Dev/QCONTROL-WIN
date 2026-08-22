@@ -811,10 +811,12 @@ class PdfDisplayWindow(OverlayWindow):
         self.current_cue = cue
         if not cue.pdf_path or not os.path.exists(cue.pdf_path):
             return
-
         self.doc.load(cue.pdf_path)
-        page = max(0, min(cue.pdf_page, self.doc.pageCount() - 1))
-        self.view.setPage(page)
+        count = self.doc.pageCount()
+        if count <= 0:
+            return
+        page = max(0, min(int(cue.pdf_page), count - 1))
+        self.view.pageNavigator().jump(page, QPoint(0, 0))
 
         if cue.pdf_zoom_mode == "FitWidth":
             self.view.setZoomMode(QPdfView.ZoomMode.FitToWidth)
