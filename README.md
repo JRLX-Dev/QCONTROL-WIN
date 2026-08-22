@@ -7,6 +7,20 @@ Built for churches, schools, and small productions that need reliable playback w
 
 ---
 
+## Download and run (testers)
+
+1. Install **Python 3.10+** from [python.org](https://www.python.org/downloads/) (not the Microsoft Store). Check **Add python.exe to PATH**.
+2. On GitHub: **Code → Download ZIP**. Extract the folder to a fast drive (SSD preferred).
+3. Double-click **`Run CueControl.bat`**.
+   - First run creates `.venv` and installs packages (needs internet; a few minutes).
+   - Later runs just start the app.
+
+If the window flashes and closes, run the `.bat` from a Command Prompt so you can read the error.
+
+Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always use the `.bat` or `.venv\Scripts\python.exe`.
+
+---
+
 ## Features
 
 - **Cue types:** Audio, Video, Image, Text (supertitles), PDF, Link/Web, OSC, Wait, Group, Automation (Stop / Fade / Crossfade)
@@ -32,7 +46,7 @@ Optional (feature-dependent):
 
 ---
 
-## Install (first time)
+## Install (manual)
 
 1. Copy the project folder to a fast drive (internal disk or external **SSD** preferred; USB flash drives are often too slow for media).
 2. Open **PowerShell** in that folder.
@@ -51,33 +65,15 @@ pip install -r requirements.txt
 
 ## Run instructions
 
-### Every session
+### Preferred
 
-```powershell
-cd "D:\path\to\QCONTROL-WIN"
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
-& ".\.venv\Scripts\Activate.ps1"
-& ".\.venv\Scripts\python.exe" ".\Main.py"
-```
+Double-click **`Run CueControl.bat`** in the project folder.
 
-Or without activating the venv:
+### Manual session
 
 ```powershell
 & ".\.venv\Scripts\python.exe" ".\Main.py"
 ```
-
-### Click-to-go kit (when you hand someone a drive)
-
-Put `Run CueControl.bat` next to `Main.py`:
-
-```bat
-@echo off
-cd /d "%~dp0"
-".venv\Scripts\python.exe" "Main.py"
-if errorlevel 1 pause
-```
-
-Operator: open the folder → double-click **Run CueControl.bat**.
 
 ### First launch checklist
 
@@ -172,10 +168,9 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 
 ## Distribution workflow (Alpha)
 
-Two hardware tiers. Same `Main.py` version on both.
-
 | Tier | Device | What’s on it | Who |
 |------|--------|--------------|-----|
+| GitHub ZIP | Their PC | Source + `Run CueControl.bat` | Testers with Python + internet |
 | Software-only | USB flash | App + `.venv` + `.bat` | First-look testers; media stays on the house PC |
 | Basic kit | 250 GB NVMe in USB-C enclosure | App + sample 1080p + `Shows\` | Batch-cloned via Sabrent dock |
 | Super-test kit | USB-C SSD | Full stack + their media | Multi-display, groups, OSC, real dry runs |
@@ -189,14 +184,9 @@ Two hardware tiers. Same `Main.py` version on both.
 
 **Future — launch updater (not built yet)**
 
-- `Run CueControl.bat` will call a small script that compares local `VERSION.txt` to GitHub `main`.
-- If the repo is newer, download **only** `Main.py` (and `VERSION.txt`), then start the app.
-- If offline or GitHub fails, start the local copy (fail open).
-- Never auto-update `.venv` from the stick.
-- Requires a **public** repo (or a later release zip). Do not bake tokens into tester drives.
-- Updates run at launch only, never mid-show.
-
-When this ships: bump `VERSION.txt` every tester-facing `Main.py` push, then clones pick it up on next networked launch.
+- `Run CueControl.bat` will compare local `VERSION.txt` to GitHub `main`.
+- If newer, download **only** `Main.py` (and `VERSION.txt`), then start.
+- Offline / GitHub fail → start local copy. Never auto-update `.venv`.
 
 ---
 
@@ -204,7 +194,8 @@ When this ships: bump `VERSION.txt` every tester-facing `Main.py` push, then clo
 
 | Symptom | What to try |
 |---------|-------------|
-| `python` / `git` not found | Use full path to `python.exe` or install Python with “Add to PATH” |
+| `No module named numpy` | You used Store Python. Use `Run CueControl.bat` or `.venv\Scripts\python.exe` |
+| `python` / `git` not found | Install python.org Python with “Add to PATH” |
 | Execution policy error | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` |
 | No sound | Check Global Default Audio Device; confirm file path exists |
 | Overlay on wrong screen | Select Display in Properties; re-enable Test/Edit after changing |
