@@ -25,10 +25,10 @@ Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always us
 
 - **Cue types:** Audio, Video, Image, Text (supertitles), PDF, Link/Web, OSC, Wait, Group, Automation (Stop / Fade / Crossfade)
 - **PDF multipage:** optional “Show all pages (scroll)” mode + Prev / Next page buttons
-- **Groups:** `organizational` (GO starts first child) and `timeline` (children fire at offsets)
+- **Groups:** `organizational` (GO starts first child, stand-by stays there) and `timeline` (children fire at offsets)
 - **Multi-display:** target text / image / video / PDF / link to any connected screen
 - **Edit Mode:** blue frame with tight 4–5 px margins; drag to move, drag edges to resize; geometry locks on release
-- **Show hardening:** 180 ms GO debounce, stand-by cue preserved after STOP ALL, transparent labels for reliable edge-drag
+- **Show hardening:** 180 ms GO debounce, Space/Esc ignore auto-repeat, live GO does not steal console focus, retrigger + cut previous Audio/Video, Auto-Fire cap (8) with loop detection, stand-by preserved after STOP ALL, Test windows do not leak, video/text/image edge-drag
 - **Drag & drop:** reorder cues, drop into groups, drop media files from Explorer
 - **OSC presets:** ETC EOS, GrandMA, HOG, Midas/Behringer, Allen & Heath, Yamaha
 - **Save / Load:** `.ccs` show files
@@ -102,6 +102,7 @@ Double-click **`Run CueControl.bat`** in the project folder.
 Global fade time: **Settings → Set Global Fade Duration**.
 
 GO is debounced (~180 ms) so rapid Space / mouse clicks do not double-fire.
+Held Space / Esc do not auto-repeat. Live GO does not pull keyboard focus onto the overlay.
 
 ### Building a cue list
 
@@ -112,7 +113,7 @@ GO is debounced (~180 ms) so rapid Space / mouse clicks do not double-fire.
    - **Off** — stays on this cue after GO
    - **Auto-Ready** — after GO, selection advances to the next cue (does not auto-start it)
    - **Auto-Follow** — when this cue’s duration ends, the next cue starts
-   - **Auto-Fire** — as soon as this cue starts, the next cue also starts
+   - **Auto-Fire** — as soon as this cue starts, the next cue also starts (max 8 in a chain; loops are stopped)
 
 ### Drag and drop
 
@@ -124,7 +125,7 @@ GO is debounced (~180 ms) so rapid Space / mouse clicks do not double-fire.
 
 1. Add a **Group** cue.
 2. In Properties set **Group mode**:
-   - **organizational** — GO starts the **first** child only; continue with GO / automation for the rest
+   - **organizational** — GO starts the **first** child and leaves stand-by on that child; continue with GO for the rest
    - **timeline** — GO starts the clock; each child fires at its **Timeline offset** (ms)
 3. Drag cues onto the group to parent them.
 4. For timeline children, select each child and set **Timeline offset**.
@@ -146,6 +147,7 @@ GO is debounced (~180 ms) so rapid Space / mouse clicks do not double-fire.
 ### Audio / Video volume
 
 Per-cue **Volume** slider normalizes levels across the stack. Video can also be muted or looped.
+A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 
 ### OSC
 
@@ -169,12 +171,18 @@ Per-cue **Volume** slider normalizes levels across the stack. Video can also be 
 3. Video with volume and mute
 4. PDF single-page and multipage scroll + Prev/Next
 5. Drag reorder + Explorer file drop
-6. Group organizational: GO group → only first child runs
+6. Group organizational: GO group → first child runs, stand-by stays on that child
 7. Group timeline: offsets 0 / 3000 / 6000 ms fire in order
 8. Rapid GO clicks (debounce) and STOP ALL (stand-by preserved)
 9. Edit Mode resize / move → uncheck → confirm geometry sticks
 10. Save show → quit → reopen → confirm numbers, groups, positions, multipage flag
 11. OSC to a known device or packet monitor (optional)
+12. Hold Space on a short Auto-Ready stack — only one GO per press
+13. Auto-Fire chain of 10+ cues — stops at 8, status bar reports the cap
+14. GO a text/image/video overlay, then press Space — console still receives GO
+15. GO audio A, then GO audio B — A stops, B plays (same for video)
+16. Test preview on cue 1, click cue 2 — cue 1 window closes
+17. Quit while a video is up — playback stops with the app
 
 Report failures with: **steps**, **expected vs actual**, and **full traceback** from the console.
 
@@ -210,10 +218,11 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 |---------|-------------|
 | `No module named numpy` | You used Store Python. Use `Run CueControl.bat` or `.venv\Scripts\python.exe` |
 | `python` / `git` not found | Install python.org Python with “Add to PATH” |
+| `py` is not recognized | Use `python` (venv already active) or `.venv\Scripts\python.exe` |
 | Execution policy error | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` |
 | No sound | Check Global Default Audio Device; confirm file path exists |
 | Overlay on wrong screen | Select Display in Properties; re-enable Test/Edit after changing |
-| Hard to grab resize edges | Labels are mouse-transparent; grab near the blue border |
+| Hard to grab resize edges | Labels (and video) are mouse-transparent; grab near the blue border |
 | Indentation / import errors | Re-download `Main.py` from this repo; do not mix partial pastes |
 | OSC no effect | Verify IP/port, console OSC enable, Windows firewall |
 | Slow scrubbing / stutters | Run from SSD, not USB flash |
@@ -227,6 +236,7 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 - Nested groups not supported
 - Media paths not yet relative/portable by default
 - Launch updater (GitHub `VERSION.txt`) not implemented yet
+- Fade & Stop is a delayed hard stop (does not ramp volume)
 
 ---
 
