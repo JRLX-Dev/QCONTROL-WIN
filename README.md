@@ -9,13 +9,19 @@ Built for churches, schools, and small productions that need reliable playback w
 
 ## Download and run (testers)
 
-1. Install **Python 3.10+** from [python.org](https://www.python.org/downloads/) (not the Microsoft Store). Check **Add python.exe to PATH**.
-2. On GitHub: **Code → Download ZIP**. Extract the folder to a fast drive (SSD preferred).
-3. Double-click **`Run CueControl.bat`**.
-   - First run creates `.venv` and installs packages (needs internet; a few minutes).
+You do **not** need to install Python yourself.
+
+1. On GitHub: **Code → Download ZIP**. Extract the folder to a fast drive (SSD preferred).
+2. Double-click **`Run CueControl.bat`**.
+   - If this PC has no usable Python 3.10+, the bat downloads the official **[python.org](https://www.python.org/downloads/)** Windows installer (64-bit, 3.12) into `runtime\` — **no admin**, nothing in Program Files.
+   - Then it creates `.venv` and installs packages (needs internet; a few minutes the first time).
    - Later runs just start the app.
 
+Microsoft Store Python is ignored on purpose (it breaks `venv` / numpy).
+
 If the window flashes and closes, run the `.bat` from a Command Prompt so you can read the error.
+
+Optional: you can still install Python from python.org yourself; the bat will use it if it is 3.10+ and not the Store stub.
 
 Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always use the `.bat` or `.venv\Scripts\python.exe`.
 
@@ -38,9 +44,9 @@ Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always us
 
 ## Requirements
 
-- Windows 10 or 11
-- Python 3.10 or newer recommended
-- Packages listed in `requirements.txt`
+- Windows 10 or 11 (64-bit)
+- Internet on **first** run (to fetch Python if needed, plus PySide6)
+- After that: this folder only (`runtime\`, `.venv\`)
 
 Optional (feature-dependent):
 - QtPdf support in your PySide6 install → PDF cues (including multipage)
@@ -50,6 +56,8 @@ Optional (feature-dependent):
 ---
 
 ## Install (manual)
+
+Prefer **`Run CueControl.bat`**. Manual steps only if you already have python.org Python:
 
 1. Copy the project folder to a fast drive (internal disk or external **SSD** preferred; USB flash drives are often too slow for media).
 2. Open **PowerShell** in that folder.
@@ -72,6 +80,8 @@ pip install -r requirements.txt
 
 Double-click **`Run CueControl.bat`** in the project folder.
 
+To only fetch Python (no app start), double-click **`Install Python.bat`**.
+
 ### Manual session
 
 ```powershell
@@ -87,7 +97,6 @@ Double-click **`Run CueControl.bat`** in the project folder.
 5. Create one Text cue, assign a display, enable **Test / Preview**, then **Edit Mode** if you need to position it.
 
 ---
-
 ## Operator brief (Alpha)
 
 ### Transport
@@ -192,7 +201,7 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 
 | Tier | Device | What’s on it | Who |
 |------|--------|--------------|-----|
-| GitHub ZIP | Their PC | Source + `Run CueControl.bat` | Testers with Python + internet |
+| GitHub ZIP | Their PC | Source + `Run CueControl.bat` | Testers; first run can fetch Python |
 | Software-only | USB flash | App + `.venv` + `.bat` | First-look testers; media stays on the house PC |
 | Basic kit | 250 GB NVMe in USB-C enclosure | App + sample 1080p + `Shows\` | Batch-cloned via Sabrent dock |
 | Super-test kit | USB-C SSD | Full stack + their media | Multi-display, groups, OSC, real dry runs |
@@ -217,8 +226,9 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 | Symptom | What to try |
 |---------|-------------|
 | `No module named numpy` | You used Store Python. Use `Run CueControl.bat` or `.venv\Scripts\python.exe` |
-| `python` / `git` not found | Install python.org Python with “Add to PATH” |
-| `py` is not recognized | Use `python` (venv already active) or `.venv\Scripts\python.exe` |
+| `python` / `py` not found | Ignore it — double-click `Run CueControl.bat`; it installs a local copy into `runtime\` |
+| Installer / download failed | Allow internet to python.org; then retry. Or run `Install Python.bat` |
+| `py` is not recognized | Use `Run CueControl.bat` (do not type `py` yourself) |
 | Execution policy error | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` |
 | No sound | Check Global Default Audio Device; confirm file path exists |
 | Overlay on wrong screen | Select Display in Properties; re-enable Test/Edit after changing |

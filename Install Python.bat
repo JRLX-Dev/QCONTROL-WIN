@@ -1,0 +1,161 @@
+@echo off
+setlocal EnableExtensions EnableDelayedExpansion
+cd /d "%~dp0"
+
+REM Official python.org 3.12.10 — 64-bit, no admin.
+REM Installs into runtime\python\ next to this script (not Program Files).
+set "PY_VER=3.12.10"
+set "PY_DIR=%cd%\runtime\python"
+set "CACHE=%cd%\runtime\cache"
+set "PATHFILE=%cd%\runtime\python.exe.path"
+
+if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+    set "PY_ARCH=arm64"
+) else (
+    set "PY_ARCH=amd64"
+)
+set "INSTALLER_EXE=python-%PY_VER%-amd64.exe"
+if /I "%PY_ARCH%"=="arm64" set "INSTALLER_EXE=python-%PY_VER%-arm64.exe"
+set "INSTALLER_URL=https://www.python.org/ftp/python/%PY_VER%/%INSTALLER_EXE%"
+set "EMBED_ZIP=python-%PY_VER%-embed-%PY_ARCH%.zip"
+set "EMBED_URL=https://www.python.org/ftp/python/%PY_VER%/%EMBED_ZIP%"
+
+echo.
+echo  CueControl — Python setup
+echo.
+
+REM --- already have a bundled copy ---
+call :check_exe "%PY_DIR%\python.exe"
+if not errorlevel 1 (
+    echo Using existing runtime\python\
+    call :write_path "%PY_DIR%\python.exe"
+    exit /b 0
+)
+
+REM --- usable system Python (not the Microsoft Store stub) ---
+set "SYS_PY="
+where py >nul 2>&1
+if not errorlevel 1 (
+    py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) and 'WindowsApps' not in sys.executable else 1)" 2>nul
+    if not errorlevel 1 (
+        for /f "delims=" %%I in ('py -3 -c "import sys; print(sys.executable)" 2^>nul') do set "SYS_PY=%%I"
+    )
+)
+if not defined SYS_PY (
+    for /f "delims=" %%I in ('where python 2^>nul') do (
+        echo %%I | find /I "WindowsApps" >nul
+        if errorlevel 1 if "!SYS_PY!"=="" set "SYS_PY=%%I"
+    )
+)
+if defined SYS_PY (
+    call :check_exe "!SYS_PY!"
+    if not errorlevel 1 (
+        echo Using system Python: !SYS_PY!
+        call :write_path "!SYS_PY!"
+        exit /b 0
+    )
+    echo Skipping Microsoft Store / too-old Python.
+    set "SYS_PY="
+)
+
+echo No usable Python 3.10+ on this PC.
+echo Downloading the official python.org installer ^(no admin, stays in this folder^)...
+echo   %INSTALLER_URL%
+echo.
+
+mkdir "%CACHE%" 2>nul
+set "INSTALLER=%CACHE%\%INSTALLER_EXE%"
+if not exist "%INSTALLER%" (
+    call :download "%INSTALLER_URL%" "%INSTALLER%"
+    if errorlevel 1 (
+        echo Official installer download failed. Trying embeddable package...
+        goto EMBED
+    )
+)
+
+echo Installing Python %PY_VER% into:
+echo   %PY_DIR%
+echo This can take a minute. SmartScreen may blink — allow it if asked.
+echo.
+"%INSTALLER%" /quiet InstallAllUsers=0 PrependPath=0 Include_launcher=0 Include_test=0 Include_doc=0 Include_dev=0 Shortcuts=0 AssociateFiles=0 CompileAll=0 TargetDir="%PY_DIR%"
+if errorlevel 1 (
+    echo Quiet installer did not finish. Trying embeddable package...
+    goto EMBED
+)
+call :check_exe "%PY_DIR%\python.exe"
+if errorlevel 1 (
+    echo Installer finished but python.exe is missing. Trying embeddable package...
+    goto EMBED
+)
+echo Bundled Python is ready.
+call :write_path "%PY_DIR%\python.exe"
+exit /b 0
+
+:EMBED
+echo.
+echo Downloading python.org embeddable package...
+set "ZIP=%CACHE%\%EMBED_ZIP%"
+if not exist "%ZIP%" (
+    call :download "%EMBED_URL%" "%ZIP%"
+    if errorlevel 1 (
+        echo.
+        echo ERROR: Could not download Python.
+        echo Allow this folder through the firewall, or install Python 3.10+ from
+        echo https://www.python.org/downloads/  ^(not the Microsoft Store^)
+        echo Check "Add python.exe to PATH", then run this again.
+        exit /b 1
+    )
+)
+mkdir "%PY_DIR%" 2>nul
+tar.exe -xf "%ZIP%" -C "%PY_DIR%"
+if errorlevel 1 (
+    echo ERROR: Could not unpack the embeddable zip ^(tar.exe missing?^).
+    exit /b 1
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$p = Get-ChildItem -LiteralPath '%PY_DIR%' -Filter '*.pth' | Select-Object -First 1; if (-not $p) { exit 1 }; $t = Get-Content -LiteralPath $p.FullName -Raw; $t = $t -replace '#import site','import site'; if ($t -notmatch 'site-packages') { $t = \"Lib\\site-packages`r`n\" + $t }; Set-Content -LiteralPath $p.FullName -Value $t -NoNewline"
+if errorlevel 1 (
+    echo ERROR: Could not enable pip on the embeddable Python.
+    exit /b 1
+)
+echo Getting pip...
+call :download "https://bootstrap.pypa.io/get-pip.py" "%CACHE%\get-pip.py"
+if errorlevel 1 exit /b 1
+"%PY_DIR%\python.exe" "%CACHE%\get-pip.py" --no-warn-script-location
+if errorlevel 1 (
+    echo ERROR: get-pip failed.
+    exit /b 1
+)
+call :check_exe "%PY_DIR%\python.exe"
+if errorlevel 1 exit /b 1
+echo Bundled embeddable Python is ready.
+call :write_path "%PY_DIR%\python.exe"
+exit /b 0
+
+:download
+set "URL=%~1"
+set "OUT=%~2"
+if exist "%OUT%" exit /b 0
+echo Fetching:
+echo   %URL%
+where curl.exe >nul 2>&1
+if not errorlevel 1 (
+    curl.exe --fail --location --retry 3 --retry-delay 2 --output "%OUT%" "%URL%"
+    if not errorlevel 1 if exist "%OUT%" exit /b 0
+)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+  "Invoke-WebRequest -Uri '%URL%' -OutFile '%OUT%' -UseBasicParsing"
+if exist "%OUT%" exit /b 0
+exit /b 1
+
+:check_exe
+set "EXE=%~1"
+if not exist "%EXE%" exit /b 1
+echo %EXE% | find /I "WindowsApps" >nul && exit /b 1
+"%EXE%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>nul
+exit /b %errorlevel%
+
+:write_path
+mkdir "%cd%\runtime" 2>nul
+> "%PATHFILE%" echo %~1
+exit /b 0

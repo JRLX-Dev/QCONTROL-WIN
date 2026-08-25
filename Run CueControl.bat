@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 title CueControl Windows
@@ -15,40 +15,49 @@ if not exist "Main.py" (
     exit /b 1
 )
 
-REM --- Find a real Python (avoid Windows Store stub) ---
-set "PYLAUNCH="
-where py >nul 2>&1
-if not errorlevel 1 set "PYLAUNCH=py -3"
-
-if not defined PYLAUNCH (
-    where python >nul 2>&1
+REM --- Get a real Python 3.10+ (download official installer into runtime\ if needed) ---
+if exist "Install Python.bat" (
+    call "%~dp0Install Python.bat"
     if errorlevel 1 (
-        echo ERROR: Python was not found.
-        echo Install Python 3.10+ from https://www.python.org/downloads/
-        echo Check "Add python.exe to PATH" during setup.
         pause
         exit /b 1
     )
-    set "PYLAUNCH=python"
 )
 
-if not exist ".venv\Scripts\python.exe" (
-    echo Creating virtual environment .venv ...
-    %PYLAUNCH% -m venv .venv
-    if errorlevel 1 (
-        echo ERROR: Could not create .venv.
-        echo Use python.org Python, not the Microsoft Store shortcut.
+set "BOOT_PY="
+if exist "runtime\python.exe.path" (
+    set /p BOOT_PY=<"runtime\python.exe.path"
+)
+
+set "APP_PY="
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>nul
+    if not errorlevel 1 set "APP_PY=%cd%\.venv\Scripts\python.exe"
+)
+
+if not defined APP_PY (
+    if not defined BOOT_PY (
+        echo ERROR: Python was not found and Install Python.bat is missing.
+        echo Put Install Python.bat next to this file, or install Python 3.10+ from python.org.
         pause
         exit /b 1
+    )
+    echo Creating virtual environment .venv ...
+    "%BOOT_PY%" -m venv .venv
+    if exist ".venv\Scripts\python.exe" (
+        set "APP_PY=%cd%\.venv\Scripts\python.exe"
+    ) else (
+        echo venv not available on this Python — using the bundled copy directly.
+        set "APP_PY=%BOOT_PY%"
     )
 )
 
 echo Installing / updating packages (first run can take a few minutes^)...
-".venv\Scripts\python.exe" -m pip install --upgrade pip
+"%APP_PY%" -m pip install --upgrade pip
 if exist "requirements.txt" (
-    ".venv\Scripts\python.exe" -m pip install -r requirements.txt
+    "%APP_PY%" -m pip install -r requirements.txt
 ) else (
-    ".venv\Scripts\python.exe" -m pip install "PySide6>=6.6" numpy soundfile python-osc
+    "%APP_PY%" -m pip install "PySide6>=6.6" numpy soundfile python-osc
 )
 if errorlevel 1 (
     echo ERROR: pip install failed. Check internet / firewall and try again.
@@ -59,7 +68,7 @@ if errorlevel 1 (
 echo.
 echo Starting CueControl...
 echo.
-".venv\Scripts\python.exe" "Main.py"
+"%APP_PY%" "Main.py"
 set "ERR=%ERRORLEVEL%"
 if not "%ERR%"=="0" (
     echo.

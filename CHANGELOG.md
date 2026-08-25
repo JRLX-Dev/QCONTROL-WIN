@@ -1,5 +1,15 @@
 # Changelog
 
+## Alpha (2026-08-25) — local Python installer
+
+### New
+- **`Install Python.bat`** (also run by `Run CueControl.bat`) fetches the official python.org **64-bit 3.12** installer when this PC has no usable 3.10+
+- Installs into `runtime\python\` — no admin, not Program Files, Microsoft Store stub skipped
+- If the full installer cannot run, falls back to the python.org **embeddable** zip + pip
+- Later launches reuse `runtime\` / `.venv` and stay offline except for package updates
+
+---
+
 ## Alpha (2026-08-25) — show-safety pass
 
 ### Fixed
