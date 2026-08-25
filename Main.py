@@ -176,6 +176,7 @@ class Cue:
         self.pdf_path = ""
         self.pdf_page = 0
         self.pdf_zoom_mode = "Fit"
+        self.pdf_multipage = False          # True = scroll all pages
 
         # Link
         self.link_url = ""
@@ -232,6 +233,7 @@ def cue_to_dict(cue):
         "pdf_path": cue.pdf_path,
         "pdf_page": cue.pdf_page,
         "pdf_zoom_mode": cue.pdf_zoom_mode,
+        "pdf_multipage": getattr(cue, "pdf_multipage", False),
         "link_url": cue.link_url,
         "link_use_system_browser": cue.link_use_system_browser,
         "osc_ip": cue.osc_ip,
@@ -282,6 +284,7 @@ def cue_from_dict(data):
     cue.pdf_path = data.get("pdf_path", "")
     cue.pdf_page = data.get("pdf_page", 0)
     cue.pdf_zoom_mode = data.get("pdf_zoom_mode", "Fit")
+    cue.pdf_multipage = bool(data.get("pdf_multipage", False))
     cue.link_url = data.get("link_url", "")
     cue.link_use_system_browser = data.get("link_use_system_browser", False)
     cue.osc_ip = data.get("osc_ip", "127.0.0.1")
@@ -390,7 +393,7 @@ class BlackoutWindow(QWidget):
 
 
 class OverlayWindow(QWidget):
-    EDGE = 14
+    EDGE = 12
 
     def __init__(self, title="Overlay", parent=None):
         super().__init__(parent)
@@ -505,6 +508,14 @@ class OverlayWindow(QWidget):
     def mouseReleaseEvent(self, event: QMouseEvent):
         self._drag_pos = None
         self._resize_edge = None
+        # Persist geometry after every drag / resize in edit mode
+        if self.edit_mode and self.current_cue is not None:
+            geo = self.geometry()
+            self.current_cue.pos_x = geo.x()
+            self.current_cue.pos_y = geo.y()
+            self.current_cue.width_px = geo.width()
+            self.current_cue.height_px = geo.height()
+            self.current_cue.user_moved = True
         event.accept()
 
     def _on_resized(self):
@@ -614,10 +625,11 @@ class TextDisplayWindow(OverlayWindow):
         super().__init__("Text Output", parent)
         self.resize(900, 220)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 16, 24, 16)
+        layout.setContentsMargins(5, 5, 5, 5)          # tight 4-5 px inside blue frame
         self.label = QLabel("")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setWordWrap(True)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self.label)
 
     def _restore_style(self):
@@ -654,10 +666,11 @@ class ImageDisplayWindow(OverlayWindow):
         self.resize(800, 450)
         self.original_pixmap = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(4, 4, 4, 4)          # tight 4 px inside blue frame
         self.label = QLabel("")
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self.label)
 
     def _restore_style(self):
@@ -805,7 +818,7 @@ class PdfDisplayWindow(OverlayWindow):
     def _restore_style(self):
         self.setStyleSheet("background-color: #222;")
 
-    def show_pdf(self, cue, screen, defaults):
+    def show_pdf(self, cue, screen, defaults, steal_focus=True):
         if not HAS_PDF or self.doc is None:
             return
         self.current_cue = cue
@@ -815,6 +828,13 @@ class PdfDisplayWindow(OverlayWindow):
         count = self.doc.pageCount()
         if count <= 0:
             return
+
+        # Multi-page scroll mode vs single page
+        if getattr(cue, "pdf_multipage", False):
+            self.view.setPageMode(QPdfView.PageMode.MultiPage)
+        else:
+            self.view.setPageMode(QPdfView.PageMode.SinglePage)
+
         page = max(0, min(int(cue.pdf_page), count - 1))
         self.view.pageNavigator().jump(page, QPoint(0, 0))
 
@@ -831,7 +851,18 @@ class PdfDisplayWindow(OverlayWindow):
         self.apply_geometry(cue, screen, defaults)
         self.show()
         self.raise_()
-        self.activateWindow()
+        if steal_focus:
+            self.activateWindow()
+
+    def goto_page(self, page: int):
+        """Jump to zero-based page index (used by prev/next buttons)."""
+        if not self.view or not self.doc:
+            return
+        count = self.doc.pageCount()
+        page = max(0, min(page, count - 1))
+        self.view.pageNavigator().jump(page, QPoint(0, 0))
+        if self.current_cue is not None:
+            self.current_cue.pdf_page = page
 
     def close_window(self):
         if self.doc:
@@ -1937,6 +1968,21 @@ class MainWindow(QMainWindow):
         page_row.addWidget(self.pdf_zoom_combo)
         page_row.addStretch()
         playout.addLayout(page_row)
+
+        # Multipage / navigation
+        multi_row = QHBoxLayout()
+        self.pdf_multipage_cb = QCheckBox("Show all pages (scroll)")
+        self.pdf_multipage_cb.toggled.connect(self.apply_pdf_multipage)
+        multi_row.addWidget(self.pdf_multipage_cb)
+        self.pdf_prev_btn = QPushButton("◀ Prev")
+        self.pdf_prev_btn.clicked.connect(self.pdf_prev_page)
+        multi_row.addWidget(self.pdf_prev_btn)
+        self.pdf_next_btn = QPushButton("Next ▶")
+        self.pdf_next_btn.clicked.connect(self.pdf_next_page)
+        multi_row.addWidget(self.pdf_next_btn)
+        multi_row.addStretch()
+        playout.addLayout(multi_row)
+
         if not HAS_PDF:
             warn = QLabel("⚠ QtPdf not available – PDF cues disabled")
             warn.setStyleSheet("color: #ff8888;")
@@ -2454,6 +2500,10 @@ class MainWindow(QMainWindow):
             self.pdf_zoom_combo.blockSignals(True)
             self.pdf_zoom_combo.setCurrentText(cue.pdf_zoom_mode)
             self.pdf_zoom_combo.blockSignals(False)
+            if hasattr(self, "pdf_multipage_cb"):
+                self.pdf_multipage_cb.blockSignals(True)
+                self.pdf_multipage_cb.setChecked(getattr(cue, "pdf_multipage", False))
+                self.pdf_multipage_cb.blockSignals(False)
             self.file_label.setText(cue.pdf_path or "-")
 
         if is_link:
@@ -2774,6 +2824,39 @@ class MainWindow(QMainWindow):
         cue = self.get_current_cue()
         if cue and cue.cue_type == "PDF":
             cue.pdf_zoom_mode = mode
+
+    def apply_pdf_multipage(self, checked: bool):
+        cue = self.get_current_cue()
+        if cue and cue.cue_type == "PDF":
+            cue.pdf_multipage = checked
+            win = self.pdf_windows.get(cue.id)
+            if win and win.current_cue is cue:
+                win.show_pdf(cue, self.get_screen_by_name(cue.screen_name),
+                             self.display_defaults, steal_focus=False)
+
+    def pdf_prev_page(self):
+        cue = self.get_current_cue()
+        if not cue or cue.cue_type != "PDF":
+            return
+        cue.pdf_page = max(0, cue.pdf_page - 1)
+        self.pdf_page_spin.blockSignals(True)
+        self.pdf_page_spin.setValue(cue.pdf_page + 1)
+        self.pdf_page_spin.blockSignals(False)
+        win = self.pdf_windows.get(cue.id)
+        if win:
+            win.goto_page(cue.pdf_page)
+
+    def pdf_next_page(self):
+        cue = self.get_current_cue()
+        if not cue or cue.cue_type != "PDF":
+            return
+        cue.pdf_page = cue.pdf_page + 1
+        self.pdf_page_spin.blockSignals(True)
+        self.pdf_page_spin.setValue(cue.pdf_page + 1)
+        self.pdf_page_spin.blockSignals(False)
+        win = self.pdf_windows.get(cue.id)
+        if win:
+            win.goto_page(cue.pdf_page)
 
     def apply_link_url(self):
         cue = self.get_current_cue()
@@ -3192,6 +3275,13 @@ class MainWindow(QMainWindow):
         self.update_running_list()
 
     def go_pressed(self):
+        # 180 ms debounce – protects against rapid Space / mouse clicks
+        now = time.time()
+        last = getattr(self, "_last_go_time", 0.0)
+        if now - last < 0.18:
+            return
+        self._last_go_time = now
+
         if not self.current_cue_id and self.cues:
             first = sorted(self.cues, key=lambda c: c.number)[0]
             self.select_cue_by_id(first.id)
@@ -3226,22 +3316,14 @@ class MainWindow(QMainWindow):
         self.blackout_btn.setChecked(False)
         self.edit_mode_cb.setChecked(False)
         self.test_cb.setChecked(False)
-        self.current_cue_id = None
+        # Intentionally keep current_cue_id so the stand-by cue remains selected
         self.refresh_cue_list()
         self.update_running_list()
-        self.statusBar.showMessage("All stopped")
+        self.statusBar.showMessage("All stopped – stand-by preserved")
 
     def fade_and_stop(self):
         self.statusBar.showMessage(f"Fading {self.fade_duration_ms//1000}s...")
         QTimer.singleShot(self.fade_duration_ms, self.stop_all)
-
-    def update_running_list(self):
-        self.running_list.clear()
-        now = time.time()
-        finished = []
-        for cid, info in list(self.active_cues.items()):
-            cue = info["cue"]
-        elapsed = (now - info["start"]) * 1000
 
     def update_running_list(self):
         self.running_list.clear()
