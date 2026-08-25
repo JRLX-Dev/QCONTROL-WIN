@@ -1,0 +1,74 @@
+CUECONTROL — START HERE
+=======================
+
+This stick runs the show. You do not install anything on the church PC.
+
+
+PLUG IN AND OPEN
+----------------
+1. Plug the USB / SSD into the computer you will use for the service.
+2. If a window does not pop up: click This PC (or My Computer).
+   Open the new drive. It may be named CueControl, USB, or just E: / F: / G:.
+3. Open the CueControl folder if you see one. You want a screen that
+   includes a file called:
+
+      Run CueControl.bat
+
+   (If Windows hides extra letters, it may just say  Run CueControl
+   and the type will be "Windows Batch File".)
+
+
+START THE SOFTWARE
+------------------
+4. Double-click  Run CueControl.bat
+5. If Windows says "Windows protected your PC":
+      click  More info
+      click  Run anyway
+6. Wait. A black text window may flash. Then CueControl opens.
+   The first start on a computer can take a minute. Leave it alone.
+
+You are in when you see the cue list and a green GO button.
+
+
+DURING THE SERVICE
+------------------
+   Spacebar  or  green GO     play the selected cue
+   Esc       or  Fade & Stop  fade everything out
+   red STOP ALL               cut everything now
+
+File → Open Show  if you need to load a saved .ccs show.
+
+Keep this window on the booth computer. Do not minimize it onto a
+projector unless your director asked you to.
+
+
+PLEASE DO NOT
+-------------
+- Do not double-click Main.py or anything inside the runtime folder.
+- Do not move, rename, or "clean up" files on this stick.
+- Do not let Windows format / repair the drive if it asks.
+- Do not eject the stick while CueControl is still open.
+  Close CueControl first, then use Eject (or Safely Remove).
+
+
+IF IT WILL NOT START
+--------------------
+- You must double-click  Run CueControl.bat  — not Main.py.
+- Try another USB port. Prefer a port on the back of the PC
+  (or a USB-C port if this is an SSD).
+- If a window flashes and vanishes, right-click  Run CueControl.bat
+  → Run as administrator is NOT needed. Instead open the .bat
+  from a Command Prompt so you can read the error, or call your
+  tech lead.
+
+Still stuck: leave the stick in the PC and text the person who
+gave it to you. Do not copy files off it "to fix it".
+
+
+WHEN YOU ARE DONE
+-----------------
+1. Close CueControl (X on the window).
+2. Eject / Safely Remove the drive.
+3. Unplug.
+
+Thank you for running the show.

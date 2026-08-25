@@ -1,5 +1,7 @@
 # CueControl Windows
 
+**Handing this folder to a booth volunteer?** Open **`START HERE.txt`** — that is the only sheet they need.
+
 Lightweight QLab-style cue system for **Windows 10 / 11**.
 Built for churches, schools, and small productions that need reliable playback without QLab pricing.
 
