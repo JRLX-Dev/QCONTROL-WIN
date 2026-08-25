@@ -59,11 +59,7 @@ if errorlevel 1 (
 echo.
 echo Starting CueControl...
 echo.
-if exist "CueControl_launch.py" (
-    ".venv\Scripts\python.exe" "CueControl_launch.py"
-) else (
-    ".venv\Scripts\python.exe" "Main.py"
-)
+".venv\Scripts\python.exe" "Main.py"
 set "ERR=%ERRORLEVEL%"
 if not "%ERR%"=="0" (
     echo.

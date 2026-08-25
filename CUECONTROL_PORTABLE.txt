@@ -1,6 +1,0 @@
-CueControl portable kit.
-
-Keep this file in the same folder as Shows\ and Media\.
-CueControl uses it to find the kit when the drive letter changes.
-
-Do not rename or delete this file.

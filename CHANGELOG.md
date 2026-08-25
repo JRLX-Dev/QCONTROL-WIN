@@ -1,21 +1,5 @@
 # Changelog
 
-## Alpha (2026-08-25) — portable USB / SSD kit
-
-### New
-- **Portable `.exe` folder** for flash drives and external SSDs — no Python, no admin, no installer
-- `CueControl_launch.py` wraps `Main.py` (unchanged) so the kit root is the folder with `CUECONTROL_PORTABLE.txt`
-- Show files store media **relative to the kit**; old absolute paths are rewritten when the file still exists under `Media\` / `Shows\`
-- File dialogs default to `Shows\` and `Media\Audio|Video|Images|PDF`
-- `build_portable.bat` + `CueControl.spec` (PyInstaller **onedir**, not onefile)
-- GitHub Actions workflow **Build portable kit** uploads `CueControl-Portable.zip`
-- Windowed exe tees start/crash text to `Logs\cuecontrol.log`
-
-### Docs
-- `PORTABLE.md` (builder) and `README-USB.txt` (booth operator)
-
----
-
 ## Alpha (2026-08-25) — show-safety pass
 
 ### Fixed
@@ -59,7 +43,8 @@
 
 ### Known Alpha limits
 - No full Show Mode lock yet
-- No Program Files installer (portable folder instead)
+- No installer / packaged `.exe` yet
 - Nested groups not supported
+- Media paths still absolute by default
+- Launch updater (`VERSION.txt`) not implemented yet
 - Fade & Stop is a delayed hard stop (does not ramp volume)
-- Launch updater (`VERSION.txt` GitHub compare) not implemented yet

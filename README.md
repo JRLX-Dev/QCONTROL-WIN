@@ -7,35 +7,7 @@ Built for churches, schools, and small productions that need reliable playback w
 
 ---
 
-## Download and run
-
-### Portable kit (USB / SSD — no Python, no admin)
-
-This is the show-computer path.
-
-1. Get **CueControl-Portable.zip** from [Releases](https://github.com/JRLX-Dev/QCONTROL-WIN/releases) **or** build it (below).
-2. Copy the unzipped folder onto an **SSD** (USB-C / NVMe enclosure preferred; cheap flash drives stutter on video).
-3. Double-click **`CueControl.exe`**.
-4. Put media in `Media\Audio`, `Media\Video`, `Media\Images`, `Media\PDF`.
-5. Save shows into `Shows\`.
-
-No installer. Nothing written to Program Files. Drive letter can change (`E:` today, `F:` tomorrow) as long as media stays inside this folder.
-
-First launch: Windows SmartScreen may say *Windows protected your PC* → **More info** → **Run anyway**.
-
-If the window never appears, open `Logs\cuecontrol.log`.
-
-Full operator sheet lives on the drive as `README-USB.txt`. Builder notes: [PORTABLE.md](PORTABLE.md).
-
-**Build the zip yourself (Windows PC, no admin):**
-
-1. Use the source folder (this repo) that already has `.venv` — or run `Run CueControl.bat` once first.
-2. Double-click **`build_portable.bat`**.
-3. Copy `dist\CueControl-Portable` onto the drive.
-
-GitHub Actions: **Actions → Build portable kit → Run workflow**, then download the artifact.
-
-### Python testers (source)
+## Download and run (testers)
 
 1. Install **Python 3.10+** from [python.org](https://www.python.org/downloads/) (not the Microsoft Store). Check **Add python.exe to PATH**.
 2. On GitHub: **Code → Download ZIP**. Extract the folder to a fast drive (SSD preferred).
@@ -60,25 +32,24 @@ Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always us
 - **Drag & drop:** reorder cues, drop into groups, drop media files from Explorer
 - **OSC presets:** ETC EOS, GrandMA, HOG, Midas/Behringer, Allen & Heath, Yamaha
 - **Save / Load:** `.ccs` show files
-- **Portable kit:** `CueControl.exe` folder for USB/SSD; show files store media **relative to the kit** so drive letters can change
+- **Portable-friendly:** designed for external SSD / no-admin workflows
 
 ---
 
 ## Requirements
 
 - Windows 10 or 11
-- **Portable kit:** nothing else
-- **Source / rebuild:** Python 3.10+ and packages in `requirements.txt`
+- Python 3.10 or newer recommended
+- Packages listed in `requirements.txt`
 
 Optional (feature-dependent):
-
 - QtPdf support in your PySide6 install → PDF cues (including multipage)
-- QtWebEngine → embedded Link cues (portable `.exe` opens Links in the system browser instead, to keep the kit small)
+- QtWebEngine → embedded Link cues
 - `python-osc` → OSC cues (listed in requirements)
 
 ---
 
-## Install (manual, Python)
+## Install (manual)
 
 1. Copy the project folder to a fast drive (internal disk or external **SSD** preferred; USB flash drives are often too slow for media).
 2. Open **PowerShell** in that folder.
@@ -97,23 +68,19 @@ pip install -r requirements.txt
 
 ## Run instructions
 
-### Preferred (show computer)
+### Preferred
 
-Double-click **`CueControl.exe`** in the portable kit folder.
-
-### Preferred (source testers)
-
-Double-click **`Run CueControl.bat`** in the project folder. If `CueControl_launch.py` is present it starts through the portable path layer (relative media + kit folders).
+Double-click **`Run CueControl.bat`** in the project folder.
 
 ### Manual session
 
 ```powershell
-& ".\.venv\Scripts\python.exe" ".\CueControl_launch.py"
+& ".\.venv\Scripts\python.exe" ".\Main.py"
 ```
 
 ### First launch checklist
 
-1. Confirm the main window opens and the status bar shows Ready (portable kit also shows `kit <folder>`).
+1. Confirm the main window opens and the status bar shows Ready.
 2. **Settings → Set Global Default Audio Device** if you are not using the system default.
 3. Plug in any extra displays you will use; they should appear in the Display dropdown on overlay cues.
 4. Create one Audio cue and press **GO** (or Space) to verify sound.
@@ -193,7 +160,7 @@ A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 
 - **File → Save** / **Save As** → `.ccs` show file
 - **File → Open Show** loads cues, fade duration, and display defaults
-- Portable kit / `CueControl_launch.py`: media inside the kit is stored **relative** to the kit folder. Keep media in `Media\` so moving the drive does not break the show. Paths outside the kit stay absolute.
+- Media paths are stored as absolute paths in Alpha; keep media in a stable folder or re-link after moving drives
 
 ---
 
@@ -216,9 +183,8 @@ A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 15. GO audio A, then GO audio B — A stops, B plays (same for video)
 16. Test preview on cue 1, click cue 2 — cue 1 window closes
 17. Quit while a video is up — playback stops with the app
-18. Portable: save a show with media in `Media\`, copy the kit folder to another drive letter, open the show — cues still find their files
 
-Report failures with: **steps**, **expected vs actual**, and **full traceback** from the console (or `Logs\cuecontrol.log` on the portable kit).
+Report failures with: **steps**, **expected vs actual**, and **full traceback** from the console.
 
 ---
 
@@ -226,25 +192,23 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 
 | Tier | Device | What’s on it | Who |
 |------|--------|--------------|-----|
-| Portable zip | SSD | `CueControl.exe` + `_internal\` + `Shows\` + `Media\` | Show computers, no Python |
 | GitHub ZIP | Their PC | Source + `Run CueControl.bat` | Testers with Python + internet |
 | Software-only | USB flash | App + `.venv` + `.bat` | First-look testers; media stays on the house PC |
-| Basic kit | 250 GB NVMe in USB-C enclosure | Portable folder + sample 1080p + `Shows\` | Batch-cloned via Sabrent dock |
+| Basic kit | 250 GB NVMe in USB-C enclosure | App + sample 1080p + `Shows\` | Batch-cloned via Sabrent dock |
 | Super-test kit | USB-C SSD | Full stack + their media | Multi-display, groups, OSC, real dry runs |
 
 **Clone process (basic kits)**
 
-1. Build one master NVMe (NTFS): copy `dist\CueControl-Portable` (or clone a known-good kit).
-2. Put house media in `Media\` and the show in `Shows\`.
-3. Smoke-test **from that drive** (not from `C:\`).
-4. Offline-clone to same-size or larger targets.
-5. Spot-check one drive per batch. Confirm the status bar `kit` path is on the new letter.
+1. Build one master NVMe (NTFS): `CueControl\` with `Main.py`, `.venv`, `Run CueControl.bat`, `Media\`, `Shows\`.
+2. Smoke-test from that drive.
+3. Offline-clone to same-size or larger 250 GB targets.
+4. Spot-check one drive per batch.
 
 **Future — launch updater (not built yet)**
 
-- Compare local `VERSION.txt` to GitHub `main`.
+- `Run CueControl.bat` will compare local `VERSION.txt` to GitHub `main`.
 - If newer, download **only** `Main.py` (and `VERSION.txt`), then start.
-- Offline / GitHub fail → start local copy. Never auto-update `_internal\` or `.venv`.
+- Offline / GitHub fail → start local copy. Never auto-update `.venv`.
 
 ---
 
@@ -252,9 +216,6 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 
 | Symptom | What to try |
 |---------|-------------|
-| SmartScreen warning on `.exe` | **More info → Run anyway**. Unsigned Alpha build. |
-| `.exe` does nothing | Read `Logs\cuecontrol.log`. Confirm `_internal\` is next to the exe. |
-| Media missing after moving the drive | Keep files in `Media\` and re-save the show once from the kit so paths become relative |
 | `No module named numpy` | You used Store Python. Use `Run CueControl.bat` or `.venv\Scripts\python.exe` |
 | `python` / `git` not found | Install python.org Python with “Add to PATH” |
 | `py` is not recognized | Use `python` (venv already active) or `.venv\Scripts\python.exe` |
@@ -271,12 +232,11 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 ## Known Alpha limits
 
 - No full Show Mode (Windows key lock) yet
-- No Program Files installer (by design — portable folder instead)
-- Portable `.exe` has no embedded web view (Link cues use the system browser)
+- No packaged `.exe` installer yet
 - Nested groups not supported
+- Media paths not yet relative/portable by default
+- Launch updater (GitHub `VERSION.txt`) not implemented yet
 - Fade & Stop is a delayed hard stop (does not ramp volume)
-- Launch updater (GitHub `VERSION.txt` compare) not implemented yet
-- Unsigned exe — SmartScreen warning on first run
 
 ---
 
