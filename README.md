@@ -1,9 +1,9 @@
 # CueControl Windows
 
-Lightweight QLab-style cue system for Windows 10/11.
+Lightweight QLab-style cue system for **Windows 10 / 11**.
 Built for churches, schools, and small productions that need reliable playback without QLab pricing.
 
-**Status:** Alpha — test thoroughly before any live show. Do not use as sole playback on a critical performance until you have dry-run tested your stack.
+**Status:** Alpha — test thoroughly before any live show. Do not use as sole playback on a critical performance until you have dry-run tested your full stack.
 
 ---
 
@@ -24,11 +24,14 @@ Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always us
 ## Features
 
 - **Cue types:** Audio, Video, Image, Text (supertitles), PDF, Link/Web, OSC, Wait, Group, Automation (Stop / Fade / Crossfade)
+- **PDF multipage:** optional “Show all pages (scroll)” mode + Prev / Next page buttons
 - **Groups:** `organizational` (GO starts first child) and `timeline` (children fire at offsets)
-- **Multi-display:** target text/image/video/PDF/link to any connected screen
+- **Multi-display:** target text / image / video / PDF / link to any connected screen
+- **Edit Mode:** blue frame with tight 4–5 px margins; drag to move, drag edges to resize; geometry locks on release
+- **Show hardening:** 180 ms GO debounce, stand-by cue preserved after STOP ALL, transparent labels for reliable edge-drag
 - **Drag & drop:** reorder cues, drop into groups, drop media files from Explorer
 - **OSC presets:** ETC EOS, GrandMA, HOG, Midas/Behringer, Allen & Heath, Yamaha
-- **Save/Load:** `.ccs` show files
+- **Save / Load:** `.ccs` show files
 - **Portable-friendly:** designed for external SSD / no-admin workflows
 
 ---
@@ -40,7 +43,7 @@ Do **not** launch `Main.py` with the Store Python under `WindowsApps`. Always us
 - Packages listed in `requirements.txt`
 
 Optional (feature-dependent):
-- QtPdf support in your PySide6 install → PDF cues
+- QtPdf support in your PySide6 install → PDF cues (including multipage)
 - QtWebEngine → embedded Link cues
 - `python-osc` → OSC cues (listed in requirements)
 
@@ -98,6 +101,8 @@ Double-click **`Run CueControl.bat`** in the project folder.
 
 Global fade time: **Settings → Set Global Fade Duration**.
 
+GO is debounced (~180 ms) so rapid Space / mouse clicks do not double-fire.
+
 ### Building a cue list
 
 1. Use the left toolbar to add cue types, **or** drag media files from Explorer into the cue list (audio / video / image / PDF).
@@ -128,9 +133,15 @@ Global fade time: **Settings → Set Global Fade Duration**.
 
 1. Select the cue → choose **Display** (primary or external).
 2. **Test / Preview** shows the cue without committing a full GO run.
-3. **Edit Mode** draws a blue border; drag to move, drag edges to resize. Uncheck Edit Mode to lock position/size.
+3. **Edit Mode** draws a blue border (tight 4–5 px margins); drag to move, drag edges to resize. Uncheck Edit Mode to lock position/size. Geometry is also saved on mouse release.
 4. Layer (0–100) and Opacity control stacking and transparency.
 5. **Blackout** puts a full black window on the selected (or primary) screen.
+
+### PDF
+
+- **Start page** and **Zoom** (Fit / FitWidth / Actual) work as before.
+- Check **Show all pages (scroll)** for multipage continuous view.
+- Use **◀ Prev** / **Next ▶** (or the page spin box) to change page while the cue is open.
 
 ### Audio / Video volume
 
@@ -156,11 +167,14 @@ Per-cue **Volume** slider normalizes levels across the stack. Video can also be 
 1. Single audio GO / STOP / Fade
 2. Text + Image on a second monitor (if available)
 3. Video with volume and mute
-4. Drag reorder + Explorer file drop
-5. Group organizational: GO group → only first child runs
-6. Group timeline: offsets 0 / 3000 / 6000 ms fire in order
-7. Save show → quit → reopen → confirm numbers, groups, positions
-8. OSC to a known device or packet monitor (optional)
+4. PDF single-page and multipage scroll + Prev/Next
+5. Drag reorder + Explorer file drop
+6. Group organizational: GO group → only first child runs
+7. Group timeline: offsets 0 / 3000 / 6000 ms fire in order
+8. Rapid GO clicks (debounce) and STOP ALL (stand-by preserved)
+9. Edit Mode resize / move → uncheck → confirm geometry sticks
+10. Save show → quit → reopen → confirm numbers, groups, positions, multipage flag
+11. OSC to a known device or packet monitor (optional)
 
 Report failures with: **steps**, **expected vs actual**, and **full traceback** from the console.
 
@@ -199,6 +213,7 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 | Execution policy error | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` |
 | No sound | Check Global Default Audio Device; confirm file path exists |
 | Overlay on wrong screen | Select Display in Properties; re-enable Test/Edit after changing |
+| Hard to grab resize edges | Labels are mouse-transparent; grab near the blue border |
 | Indentation / import errors | Re-download `Main.py` from this repo; do not mix partial pastes |
 | OSC no effect | Verify IP/port, console OSC enable, Windows firewall |
 | Slow scrubbing / stutters | Run from SSD, not USB flash |
