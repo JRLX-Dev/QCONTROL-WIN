@@ -4,6 +4,18 @@
 # Audio | Text | Image | Video | PDF | Link | OSC | Wait | Group
 # + Volume + Save/Load + Drag & Drop
 # =====================================================================
+"""CueControl Windows — a lightweight QLab-style cue playback app.
+
+Built for churches, schools, and small productions on Windows 10/11.
+One-file PySide6 app: cue list, GO/STOP, overlays (text/image/video/PDF/web),
+audio, OSC, groups, and .ccs show files.
+
+Follow modes
+    Off          GO fires this cue only; stand-by stays put
+    Auto-Ready   GO fires this cue and arms the next one
+    Auto-Follow  when this cue's duration ends, the next cue starts
+    Auto-Fire    GO fires this cue and immediately fires the next (capped)
+"""
 
 import sys
 import os
@@ -26,7 +38,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect, Signal, QSize
 from PySide6.QtGui import (
     QColor, QAction, QPainter, QPen, QGuiApplication,
-    QMouseEvent, QPixmap, QKeySequence
+    QMouseEvent, QPixmap, QKeySequence, QShortcut
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 from PySide6.QtMultimediaWidgets import QVideoWidget
@@ -127,6 +139,7 @@ def device_id_to_str(raw_id):
 # SECTION: Cue data model
 # =====================================================================
 class Cue:
+    """One row in the cue list: media, overlay, automation, wait, or group."""
     def __init__(self, number, name, cue_type="Audio", follow_mode="Auto-Ready"):
         self.id = str(uuid.uuid4())
         self.number = float(number)
@@ -393,6 +406,11 @@ class BlackoutWindow(QWidget):
 
 
 class OverlayWindow(QWidget):
+    """Frameless always-on-top output window with edit-mode drag/resize.
+
+    Live GO must not steal keyboard focus (Space/Esc stay on the console).
+    Edit / Test mode may activate the window so the operator can grab edges.
+    """
     EDGE = 12
 
     def __init__(self, title="Overlay", parent=None):
@@ -404,6 +422,8 @@ class OverlayWindow(QWidget):
             Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setMinimumSize(200, 80)
 
         self.current_cue = None
@@ -638,7 +658,7 @@ class TextDisplayWindow(OverlayWindow):
         else:
             self.setStyleSheet("background-color: rgba(0,0,0,160); border-radius: 10px;")
 
-    def show_text(self, cue, screen, defaults):
+    def show_text(self, cue, screen, defaults, steal_focus=True):
         self.current_cue = cue
         self.label.setText(cue.text or "")
         self.label.setStyleSheet(f"""
@@ -657,7 +677,8 @@ class TextDisplayWindow(OverlayWindow):
         self.apply_geometry(cue, screen, defaults)
         self.show()
         self.raise_()
-        self.activateWindow()
+        if steal_focus:
+            self.activateWindow()
 
 
 class ImageDisplayWindow(OverlayWindow):
@@ -676,7 +697,7 @@ class ImageDisplayWindow(OverlayWindow):
     def _restore_style(self):
         self.setStyleSheet("background-color: rgba(0,0,0,200); border-radius: 6px;")
 
-    def show_image(self, cue, screen, defaults):
+    def show_image(self, cue, screen, defaults, steal_focus=True):
         self.current_cue = cue
         path = cue.image_path
         if not path or not os.path.exists(path):
@@ -701,7 +722,8 @@ class ImageDisplayWindow(OverlayWindow):
         self.apply_geometry(cue, screen, defaults)
         self.show()
         self.raise_()
-        self.activateWindow()
+        if steal_focus:
+            self.activateWindow()
 
     def _on_resized(self):
         if self.current_cue and self.original_pixmap:
@@ -735,10 +757,13 @@ class VideoDisplayWindow(OverlayWindow):
         self.player.setAudioOutput(self.audio_output)
 
         self.video_widget = QVideoWidget()
+        self.video_widget.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True
+        )
         self.player.setVideoOutput(self.video_widget)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
         layout.addWidget(self.video_widget)
 
@@ -747,7 +772,7 @@ class VideoDisplayWindow(OverlayWindow):
     def _restore_style(self):
         self.setStyleSheet("background-color: black;")
 
-    def show_video(self, cue, screen, defaults, audio_device=None):
+    def show_video(self, cue, screen, defaults, audio_device=None, steal_focus=True):
         self.current_cue = cue
 
         if not cue.video_path or not os.path.exists(cue.video_path):
@@ -768,7 +793,8 @@ class VideoDisplayWindow(OverlayWindow):
 
         self.show()
         self.raise_()
-        self.activateWindow()
+        if steal_focus:
+            self.activateWindow()
 
         def on_status(status):
             if status == QMediaPlayer.MediaStatus.LoadedMedia:
@@ -890,7 +916,7 @@ class WebDisplayWindow(OverlayWindow):
     def _restore_style(self):
         self.setStyleSheet("background-color: #111;")
 
-    def show_url(self, cue, screen, defaults):
+    def show_url(self, cue, screen, defaults, steal_focus=True):
         if not HAS_WEBENGINE or self.view is None:
             return
         self.current_cue = cue
@@ -906,7 +932,8 @@ class WebDisplayWindow(OverlayWindow):
         self.apply_geometry(cue, screen, defaults)
         self.show()
         self.raise_()
-        self.activateWindow()
+        if steal_focus:
+            self.activateWindow()
 
     def close_window(self):
         if self.view:
@@ -1033,6 +1060,9 @@ class DefaultPositionsDialog(QDialog):
 # SECTION: Main Window
 # =====================================================================
 class MainWindow(QMainWindow):
+    """Console: cue list, properties, GO/STOP transport, and playback engine."""
+    AUTO_FIRE_MAX = 8
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("CueControl Windows")
@@ -2087,10 +2117,6 @@ class MainWindow(QMainWindow):
         gsl.addRow(note_g)
         prop_layout.addWidget(self.group_settings_group)
         self.group_settings_group.hide()
-        note_g.setStyleSheet("color:#aaa; font-size:11px;")
-        gsl.addRow(note_g)
-        prop_layout.addWidget(self.group_settings_group)
-        self.group_settings_group.hide()
 
         # Waveform
         self.wave_group = QGroupBox("Waveform")
@@ -2195,12 +2221,16 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.statusBar)
         self.statusBar.showMessage("Ready – drag files or cues to reorder / group")
 
-        # Shortcuts
-        for key, slot in [("Space", self.go_pressed), ("Esc", self.fade_and_stop)]:
-            a = QAction(self)
-            a.setShortcut(key)
-            a.triggered.connect(slot)
-            self.addAction(a)
+        # Space / Esc: WindowShortcut so QLineEdit still types spaces,
+        # auto-repeat off so a held key cannot GO-walk or stack fades.
+        space_sc = QShortcut(QKeySequence(Qt.Key.Key_Space), self)
+        space_sc.setAutoRepeat(False)
+        space_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        space_sc.activated.connect(self.go_pressed)
+        esc_sc = QShortcut(QKeySequence(Qt.Key.Key_Escape), self)
+        esc_sc.setAutoRepeat(False)
+        esc_sc.setContext(Qt.ShortcutContext.WindowShortcut)
+        esc_sc.activated.connect(self.fade_and_stop)
 
         delete_action = QAction("Delete Cue", self)
         delete_action.setShortcut(QKeySequence("Ctrl+Delete"))
@@ -2357,7 +2387,14 @@ class MainWindow(QMainWindow):
         cue = self.get_cue_by_id(cue_id)
         if not cue:
             return
+        prev_id = self.current_cue_id
         self.current_cue_id = cue.id
+        # Test / Edit previews of the previous cue leak if we uncheck
+        # the box with blockSignals. Destroy idle windows only.
+        if prev_id and prev_id != cue.id and prev_id not in self.active_cues:
+            prev = self.get_cue_by_id(prev_id)
+            if prev is not None:
+                self.destroy_window(prev)
 
         self.number_spin.blockSignals(True)
         self.number_spin.setValue(cue.number)
@@ -2672,7 +2709,8 @@ class MainWindow(QMainWindow):
         if cue and cue.cue_type == "Text":
             win = self.text_windows.get(cue.id)
             if win and win.current_cue is cue:
-                win.show_text(cue, self.get_screen_by_name(cue.screen_name), self.display_defaults)
+                win.show_text(cue, self.get_screen_by_name(cue.screen_name),
+                             self.display_defaults, steal_focus=False)
 
     def pick_text_color(self):
         cue = self.get_current_cue()
@@ -2850,11 +2888,16 @@ class MainWindow(QMainWindow):
         cue = self.get_current_cue()
         if not cue or cue.cue_type != "PDF":
             return
-        cue.pdf_page = cue.pdf_page + 1
+        nxt = cue.pdf_page + 1
+        win = self.pdf_windows.get(cue.id)
+        if win and getattr(win, "doc", None) is not None:
+            count = win.doc.pageCount()
+            if count > 0:
+                nxt = min(nxt, count - 1)
+        cue.pdf_page = max(0, nxt)
         self.pdf_page_spin.blockSignals(True)
         self.pdf_page_spin.setValue(cue.pdf_page + 1)
         self.pdf_page_spin.blockSignals(False)
-        win = self.pdf_windows.get(cue.id)
         if win:
             win.goto_page(cue.pdf_page)
 
@@ -2957,9 +3000,12 @@ class MainWindow(QMainWindow):
     # Playback + Crossfade + Group + Wait
     # ------------------------------------------------------------------
     def start_cue(self, cue):
+        if cue is None:
+            return False
+
+        # Retrigger: stop this cue if it is already running, then start again.
         if cue.id in self.active_cues:
-            self.statusBar.showMessage(f"Cue {cue.number} is already running")
-            return
+            self.stop_single_cue(cue.id)
 
         IMPLEMENTED = (
             "Audio", "Video", "Image", "Text", "PDF", "Link", "OSC",
@@ -2967,7 +3013,13 @@ class MainWindow(QMainWindow):
         )
         if cue.cue_type not in IMPLEMENTED:
             self.statusBar.showMessage(f"{cue.cue_type} cues aren't implemented yet")
-            return
+            return False
+
+        # One bed at a time: a new Audio/Video cuts the previous same type.
+        if cue.cue_type in ("Audio", "Video"):
+            for cid, other in list(self.active_cues.items()):
+                if other["cue"].cue_type == cue.cue_type and cid != cue.id:
+                    self.stop_single_cue(cid)
 
         info = {"cue": cue, "start": time.time(), "player": None, "output": None}
         started = False
@@ -2977,7 +3029,7 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(
                     f"Audio file missing: {cue.media_path or '(none)'}"
                 )
-                return
+                return False
             player, output = self.create_player(cue)
 
             def on_status(status):
@@ -2993,7 +3045,7 @@ class MainWindow(QMainWindow):
         elif cue.cue_type == "Text":
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
-            win.show_text(cue, screen, self.display_defaults)
+            win.show_text(cue, screen, self.display_defaults, steal_focus=False)
             started = True
 
         elif cue.cue_type == "Image":
@@ -3001,7 +3053,7 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(
                     f"Image file missing: {cue.image_path or '(none)'}"
                 )
-                return
+                return False
             if cue.image_persistent:
                 for other_id, other_info in list(self.active_cues.items()):
                     other_cue = other_info["cue"]
@@ -3013,7 +3065,7 @@ class MainWindow(QMainWindow):
                         self.stop_single_cue(other_id)
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
-            win.show_image(cue, screen, self.display_defaults)
+            win.show_image(cue, screen, self.display_defaults, steal_focus=False)
             started = True
 
         elif cue.cue_type == "Video":
@@ -3021,11 +3073,11 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(
                     f"Video file missing: {cue.video_path or '(none)'}"
                 )
-                return
+                return False
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
             device = self.get_device_by_id(cue.audio_device_id)
-            win.show_video(cue, screen, self.display_defaults, device)
+            win.show_video(cue, screen, self.display_defaults, device, steal_focus=False)
             started = True
 
         elif cue.cue_type == "PDF":
@@ -3033,17 +3085,17 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(
                     f"PDF file missing: {cue.pdf_path or '(none)'}"
                 )
-                return
+                return False
             screen = self.get_screen_by_name(cue.screen_name)
             win = self.get_or_create_window(cue)
-            win.show_pdf(cue, screen, self.display_defaults)
+            win.show_pdf(cue, screen, self.display_defaults, steal_focus=False)
             started = True
 
         elif cue.cue_type == "Link":
             url = (cue.link_url or "").strip()
             if not url:
                 self.statusBar.showMessage("No URL set for Link cue")
-                return
+                return False
             if not url.startswith(("http://", "https://")):
                 url = "https://" + url
             if cue.link_use_system_browser or not HAS_WEBENGINE:
@@ -3053,12 +3105,12 @@ class MainWindow(QMainWindow):
             else:
                 screen = self.get_screen_by_name(cue.screen_name)
                 win = self.get_or_create_window(cue)
-                win.show_url(cue, screen, self.display_defaults)
+                win.show_url(cue, screen, self.display_defaults, steal_focus=False)
                 started = True
 
         elif cue.cue_type == "OSC":
             if not self.send_osc(cue):
-                return
+                return False
             started = True
 
         elif cue.cue_type == "Wait":
@@ -3069,7 +3121,7 @@ class MainWindow(QMainWindow):
 
         elif cue.cue_type == "Group":
             self.start_group_cue(cue)
-            return
+            return True
 
         elif cue.cue_type == "Automation":
             name_lower = cue.name.lower()
@@ -3082,12 +3134,13 @@ class MainWindow(QMainWindow):
             started = True
 
         if not started:
-            return
+            return False
 
         self.active_cues[cue.id] = info
         self.update_running_list()
         self.statusBar.showMessage(f"Started {cue.number} – {cue.name}")
         self._maybe_auto_fire(cue)
+        return True
 
     def repair_cue_links(self):
         """Remove stale parent/child references so no cue becomes invisible."""
@@ -3193,13 +3246,43 @@ class MainWindow(QMainWindow):
         QListWidget.mousePressEvent(self.cue_list, event)
 
     def _maybe_auto_fire(self, cue):
-        """If follow mode is Auto-Fire, immediately start the next cue."""
-        if cue.follow_mode != "Auto-Fire":
+        """Fire the next Auto-Fire cue, iteratively.
+
+        Nested start_cue -> _maybe_auto_fire calls are ignored while a chain
+        is walking so we cannot recurse / overflow. Stops on loopback
+        (same cue id seen twice) or after AUTO_FIRE_MAX hops.
+        """
+        if cue is None or getattr(cue, "follow_mode", "") != "Auto-Fire":
             return
-        nxt = self._next_cue_after(cue)
-        if nxt is not None:
-            self.select_cue_by_id(nxt.id)
-            self.start_cue(nxt)
+        if getattr(self, "_auto_fire_busy", False):
+            return
+        self._auto_fire_busy = True
+        try:
+            seen = {cue.id}
+            current = cue
+            hops = 0
+            while hops < self.AUTO_FIRE_MAX:
+                nxt = self._next_cue_after(current)
+                if nxt is None:
+                    break
+                if nxt.id in seen:
+                    self.statusBar.showMessage(
+                        "Auto-Fire loop detected – chain stopped"
+                    )
+                    break
+                seen.add(nxt.id)
+                hops += 1
+                self.select_cue_by_id(nxt.id)
+                self.start_cue(nxt)
+                if nxt.follow_mode != "Auto-Fire":
+                    break
+                current = nxt
+            else:
+                self.statusBar.showMessage(
+                    f"Auto-Fire capped at {self.AUTO_FIRE_MAX} cues"
+                )
+        finally:
+            self._auto_fire_busy = False
 
     def _next_cue_after(self, cue):
         ordered = sorted(self.cues, key=lambda c: c.number)
@@ -3290,9 +3373,18 @@ class MainWindow(QMainWindow):
         if not cue:
             return
 
-        self.start_cue(cue)
+        started = self.start_cue(cue)
+        if not started:
+            return
 
         if cue.follow_mode == "Auto-Ready":
+            # Organizational group: start_group_cue already armed the first child.
+            is_org_group = (
+                (cue.cue_type == "Group" or getattr(cue, "is_group", False))
+                and getattr(cue, "group_mode", "organizational") != "timeline"
+            )
+            if is_org_group:
+                return
             sorted_cues = sorted(self.cues, key=lambda c: c.number)
             try:
                 idx = sorted_cues.index(cue)
@@ -3319,11 +3411,24 @@ class MainWindow(QMainWindow):
         # Intentionally keep current_cue_id so the stand-by cue remains selected
         self.refresh_cue_list()
         self.update_running_list()
+        self._fade_pending = False
+        try:
+            self.activateWindow()
+        except RuntimeError:
+            pass
         self.statusBar.showMessage("All stopped – stand-by preserved")
 
     def fade_and_stop(self):
+        if getattr(self, "_fade_pending", False):
+            return
+        self._fade_pending = True
         self.statusBar.showMessage(f"Fading {self.fade_duration_ms//1000}s...")
-        QTimer.singleShot(self.fade_duration_ms, self.stop_all)
+
+        def _finish_fade():
+            self._fade_pending = False
+            self.stop_all()
+
+        QTimer.singleShot(self.fade_duration_ms, _finish_fade)
 
     def update_running_list(self):
         self.running_list.clear()
@@ -3570,6 +3675,10 @@ class MainWindow(QMainWindow):
         else:
             self.blackout_window.hide_blackout()
             self.statusBar.showMessage("Blackout cleared")
+
+    def closeEvent(self, event):
+        self.stop_all()
+        event.accept()
 
     def populate_device_combo(self, cue=None):
         self.device_combo.blockSignals(True)
