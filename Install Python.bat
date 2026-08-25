@@ -3,11 +3,11 @@ setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 REM Official python.org 3.12.10 — 64-bit, no admin.
-REM Installs into runtime\python\ next to this script (not Program Files).
+REM Always lives in runtime\python\ ON THIS FOLDER so a USB/SSD can move PCs.
+REM Host Python is ignored on purpose (it would not travel with the drive).
 set "PY_VER=3.12.10"
-set "PY_DIR=%cd%\runtime\python"
-set "CACHE=%cd%\runtime\cache"
-set "PATHFILE=%cd%\runtime\python.exe.path"
+set "PY_DIR=%~dp0runtime\python"
+set "CACHE=%~dp0runtime\cache"
 
 if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
     set "PY_ARCH=arm64"
@@ -21,45 +21,19 @@ set "EMBED_ZIP=python-%PY_VER%-embed-%PY_ARCH%.zip"
 set "EMBED_URL=https://www.python.org/ftp/python/%PY_VER%/%EMBED_ZIP%"
 
 echo.
-echo  CueControl — Python setup
+echo  CueControl — bundled Python
+echo  Folder: %cd%
 echo.
 
-REM --- already have a bundled copy ---
 call :check_exe "%PY_DIR%\python.exe"
 if not errorlevel 1 (
-    echo Using existing runtime\python\
-    call :write_path "%PY_DIR%\python.exe"
+    echo Using bundled runtime\python\  ^(travels with this folder^)
     exit /b 0
 )
 
-REM --- usable system Python (not the Microsoft Store stub) ---
-set "SYS_PY="
-where py >nul 2>&1
-if not errorlevel 1 (
-    py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) and 'WindowsApps' not in sys.executable else 1)" 2>nul
-    if not errorlevel 1 (
-        for /f "delims=" %%I in ('py -3 -c "import sys; print(sys.executable)" 2^>nul') do set "SYS_PY=%%I"
-    )
-)
-if not defined SYS_PY (
-    for /f "delims=" %%I in ('where python 2^>nul') do (
-        echo %%I | find /I "WindowsApps" >nul
-        if errorlevel 1 if "!SYS_PY!"=="" set "SYS_PY=%%I"
-    )
-)
-if defined SYS_PY (
-    call :check_exe "!SYS_PY!"
-    if not errorlevel 1 (
-        echo Using system Python: !SYS_PY!
-        call :write_path "!SYS_PY!"
-        exit /b 0
-    )
-    echo Skipping Microsoft Store / too-old Python.
-    set "SYS_PY="
-)
-
-echo No usable Python 3.10+ on this PC.
-echo Downloading the official python.org installer ^(no admin, stays in this folder^)...
+echo No bundled Python in runtime\ yet.
+echo Downloading the official python.org installer into this folder.
+echo No admin. Nothing in Program Files. Drive letter can change later.
 echo   %INSTALLER_URL%
 echo.
 
@@ -88,7 +62,6 @@ if errorlevel 1 (
     goto EMBED
 )
 echo Bundled Python is ready.
-call :write_path "%PY_DIR%\python.exe"
 exit /b 0
 
 :EMBED
@@ -99,17 +72,17 @@ if not exist "%ZIP%" (
     call :download "%EMBED_URL%" "%ZIP%"
     if errorlevel 1 (
         echo.
-        echo ERROR: Could not download Python.
-        echo Allow this folder through the firewall, or install Python 3.10+ from
-        echo https://www.python.org/downloads/  ^(not the Microsoft Store^)
-        echo Check "Add python.exe to PATH", then run this again.
+        echo ERROR: Could not download Python into this folder.
+        echo First run needs internet to python.org.
+        echo Format the drive NTFS if the installer failed on a flash drive.
         exit /b 1
     )
 )
 mkdir "%PY_DIR%" 2>nul
 tar.exe -xf "%ZIP%" -C "%PY_DIR%"
 if errorlevel 1 (
-    echo ERROR: Could not unpack the embeddable zip ^(tar.exe missing?^).
+    echo ERROR: Could not unpack the embeddable zip ^(tar.exe missing, or the drive is FAT32^).
+    echo Format the USB/SSD as NTFS and try again.
     exit /b 1
 )
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -129,7 +102,6 @@ if errorlevel 1 (
 call :check_exe "%PY_DIR%\python.exe"
 if errorlevel 1 exit /b 1
 echo Bundled embeddable Python is ready.
-call :write_path "%PY_DIR%\python.exe"
 exit /b 0
 
 :download
@@ -154,8 +126,3 @@ if not exist "%EXE%" exit /b 1
 echo %EXE% | find /I "WindowsApps" >nul && exit /b 1
 "%EXE%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" 2>nul
 exit /b %errorlevel%
-
-:write_path
-mkdir "%cd%\runtime" 2>nul
-> "%PATHFILE%" echo %~1
-exit /b 0
