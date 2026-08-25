@@ -17,3 +17,7 @@ test_audio.*
 .idea/
 .vscode/
 *.log
+build/
+dist/
+Logs/
+CueControl-Portable.zip

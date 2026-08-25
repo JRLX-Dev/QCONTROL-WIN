@@ -1,0 +1,4 @@
+CueControl Windows
+version=0.3.0-alpha
+channel=portable
+date=2026-08-25
