@@ -182,8 +182,8 @@ A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 
 ### Save / Load
 
-- **File → Save** / **Save As** → `.ccs` show file
-- **File → Open Show** loads cues, fade duration, and display defaults
+- **File → Save** / **Save As** → `.ccs` show file (atomic write — a yanked USB stick will not truncate the previous save)
+- **File → Open Show** loads cues, fade duration, and display defaults. Corrupt cues are skipped with a warning
 - Media paths are stored as absolute paths in Alpha; keep media in a stable folder or re-link after moving drives
 
 ---

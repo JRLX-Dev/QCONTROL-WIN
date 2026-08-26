@@ -1,5 +1,20 @@
 # Changelog
 
+## Alpha (2026-08-26) — atomic save + crash-safety nits
+
+### Fixed
+- **Save is atomic** — `.ccs` is written to a temp file, flushed, then `os.replace`d. Yanking the USB mid-save can no longer leave a half-written show; the previous file stays intact
+- Crash dialog is **latched** (one per process) so a hot UI timer cannot flood the booth
+- Exception hook installs **before** the window is built
+- Corrupt `.ccs` rows that are not dicts no longer abort the rest of the load
+- Group loop GO now reports as a failed start (does not pretend it fired)
+- `crash_log.txt` and leftover `.ccs.tmp` are gitignored
+
+### Docs
+- Docstrings on save/load, atomic write, excepthook, cue serialize helpers
+
+---
+
 ## Alpha (2026-08-25) — local Python installer
 
 ### New

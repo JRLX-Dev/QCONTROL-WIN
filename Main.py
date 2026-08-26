@@ -22,6 +22,8 @@ import os
 import time
 import uuid
 import json
+import tempfile
+import traceback
 import webbrowser
 import numpy as np
 import soundfile as sf
@@ -125,6 +127,7 @@ OSC_PRESETS = {
 # SECTION: Audio device id helper
 # =====================================================================
 def device_id_to_str(raw_id):
+    """Normalize a Qt audio device id to a stable string (or None)."""
     if raw_id is None:
         return None
     if isinstance(raw_id, str):
@@ -224,7 +227,41 @@ def _safe_num(data, key, default, cast=float):
         return default
 
 
+def _app_dir():
+    """Folder that holds Main.py (or the exe). Crash log and .ccs live here on a stick."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def _atomic_write_json(path, data):
+    """Write JSON so yanking a USB stick cannot leave a half-written .ccs.
+
+    Bytes go to a temp file in the same folder, are flushed to disk, then
+    os.replace() swaps the name. On NTFS that swap is atomic: the previous
+    show file stays intact until the new one is fully written.
+    """
+    path = os.path.abspath(path)
+    folder = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".ccs-", suffix=".tmp", dir=folder)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
 def cue_to_dict(cue):
+    """Serialize one Cue to a JSON-safe dict."""
     return {
         "id": cue.id,
         "number": cue.number,
@@ -276,6 +313,7 @@ def cue_to_dict(cue):
 
 
 def cue_from_dict(data):
+    """Rebuild a Cue from saved JSON. Numeric fields go through _safe_num()."""
     safe_number = _safe_num(data, "number", 1, float)
     cue = Cue(safe_number, data.get("name", "Untitled"), data.get("cue_type", "Audio"))
     cue.id = data.get("id", str(uuid.uuid4()))
@@ -1501,6 +1539,7 @@ class MainWindow(QMainWindow):
     # Save / Load
     # ------------------------------------------------------------------
     def new_show(self):
+        """Clear the cue list after an optional confirm."""
         if self.cues:
             reply = QMessageBox.question(
                 self, "New Show",
@@ -1520,6 +1559,7 @@ class MainWindow(QMainWindow):
         self.statusBar.showMessage("New show created")
 
     def save_show(self, force_dialog=False):
+        """Write the current show to a .ccs file (atomic replace)."""
         if self.current_show_path and not force_dialog:
             path = self.current_show_path
         else:
@@ -1543,8 +1583,7 @@ class MainWindow(QMainWindow):
         }
 
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            _atomic_write_json(path, data)
             self.current_show_path = path
             self.update_window_title()
             self.statusBar.showMessage(f"Saved: {os.path.basename(path)}")
@@ -1552,6 +1591,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Save Error", f"Could not save show:\n{e}")
 
     def load_show(self):
+        """Open a .ccs show. Corrupt cues are skipped; the rest still load."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Open Show", "", "CueControl Show (*.ccs);;All Files (*)"
         )
@@ -1565,6 +1605,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Load Error", f"Could not open show:\n{e}")
             return
 
+        if not isinstance(data, dict):
+            QMessageBox.critical(self, "Load Error", "This file is not a CueControl show.")
+            return
+
         self.stop_all()
         self.cues.clear()
         self.current_cue_id = None
@@ -1572,10 +1616,14 @@ class MainWindow(QMainWindow):
         skipped = 0
         for cdata in data.get("cues", []):
             try:
+                if not isinstance(cdata, dict):
+                    skipped += 1
+                    continue
                 self.cues.append(cue_from_dict(cdata))
             except Exception as e:
                 skipped += 1
-                print(f"Skipped a corrupt cue while loading ({cdata.get('name', '?')!r}): {e}")
+                name = cdata.get("name", "?") if isinstance(cdata, dict) else "?"
+                print(f"Skipped a corrupt cue while loading ({name!r}): {e}")
 
         self.repair_cue_links()
 
@@ -1587,14 +1635,23 @@ class MainWindow(QMainWindow):
                 "a clean copy once you've confirmed everything is intact."
             )
 
-        self.fade_duration_ms = data.get("fade_duration_ms", 2000)
+        self.fade_duration_ms = _safe_num(data, "fade_duration_ms", 2000, int)
+        if self.fade_duration_ms < 1:
+            self.fade_duration_ms = 2000
 
         self.display_defaults.clear()
-        for screen_name, kinds in data.get("display_defaults", {}).items():
-            self.display_defaults[screen_name] = {}
-            for kind, rect_list in kinds.items():
-                if isinstance(rect_list, list) and len(rect_list) == 4:
-                    self.display_defaults[screen_name][kind] = QRect(*rect_list)
+        defaults = data.get("display_defaults") or {}
+        if isinstance(defaults, dict):
+            for screen_name, kinds in defaults.items():
+                if not isinstance(kinds, dict):
+                    continue
+                self.display_defaults[screen_name] = {}
+                for kind, rect_list in kinds.items():
+                    if isinstance(rect_list, list) and len(rect_list) == 4:
+                        try:
+                            self.display_defaults[screen_name][kind] = QRect(*rect_list)
+                        except (TypeError, ValueError):
+                            pass
 
         self.current_show_path = path
         self.refresh_cue_list()
@@ -3152,8 +3209,7 @@ class MainWindow(QMainWindow):
             started = True
 
         elif cue.cue_type == "Group":
-            self.start_group_cue(cue)
-            return True
+            return bool(self.start_group_cue(cue))
 
         elif cue.cue_type == "Automation":
             name_lower = cue.name.lower()
@@ -3209,14 +3265,16 @@ class MainWindow(QMainWindow):
             self.statusBar.showMessage(
                 f"Group loop detected in \"{cue.name}\" – refusing to start it again"
             )
-            return
+            return False
         stack.add(cue.id)
         try:
             self._start_group_cue_inner(cue)
         finally:
             stack.discard(cue.id)
+        return True
 
     def _start_group_cue_inner(self, cue):
+        """Fire children: organizational = first child; timeline = offset clock."""
         children = [self.get_cue_by_id(cid) for cid in getattr(cue, "group_children", [])]
         children = [c for c in children if c is not None]
         mode = getattr(cue, "group_mode", "organizational") or "organizational"
@@ -3733,6 +3791,7 @@ class MainWindow(QMainWindow):
             self.statusBar.showMessage("Blackout cleared")
 
     def closeEvent(self, event):
+        """Stop all playback so media cannot outlive the window."""
         self.stop_all()
         event.accept()
 
@@ -3753,46 +3812,52 @@ class MainWindow(QMainWindow):
 # =====================================================================
 # Application entry point
 # =====================================================================
-def install_excepthook(get_window):
+def install_excepthook():
     """Catch unhandled exceptions from Qt slots/timers.
 
     Without this, PySide6 tends to hard-abort the process on any uncaught
-    exception raised inside a signal/slot/timer callback -- no dialog, no
-    log, the window just disappears mid-show. This gives the operator a
-    fighting chance to hit Save before things go further sideways, and
-    leaves a crash log next to the exe for post-mortem debugging.
+    exception inside a signal, slot, or timer — no dialog, no log, the
+    window just disappears mid-show. Logs every hit to crash_log.txt next
+    to the app. Shows at most one dialog per process so a hot 300 ms timer
+    cannot bury the operator in message boxes.
     """
-    import traceback
+    state = {"shown": False}
 
     def _hook(exc_type, exc_value, exc_tb):
+        if exc_type is KeyboardInterrupt:
+            return sys.__excepthook__(exc_type, exc_value, exc_tb)
+
         text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
         print(text, file=sys.stderr)
 
         try:
-            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash_log.txt")
+            log_path = os.path.join(_app_dir(), "crash_log.txt")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n{text}")
         except Exception:
-            pass  # logging failed too; don't let that mask the real error
+            pass
 
+        if state["shown"]:
+            return
+        state["shown"] = True
         try:
-            win = get_window()
+            parent = QApplication.activeWindow()
             QMessageBox.critical(
-                win, "CueControl — Unexpected Error",
+                parent, "CueControl — Unexpected Error",
                 f"{exc_type.__name__}: {exc_value}\n\n"
                 "CueControl hit a bug. The cue list is probably still intact —\n"
                 "use File → Save As now, then restart the app before continuing the show.\n\n"
                 "(Details written to crash_log.txt)"
             )
         except Exception:
-            pass  # if even the dialog fails, at least stderr/log has it
+            pass
 
     sys.excepthook = _hook
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    install_excepthook()
     window = MainWindow()
-    install_excepthook(lambda: window)
     window.show()
     sys.exit(app.exec())
