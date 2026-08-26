@@ -206,6 +206,24 @@ class Cue:
 # =====================================================================
 # SECTION: Serialization
 # =====================================================================
+def _safe_num(data, key, default, cast=float):
+    """Pull a numeric field out of loaded JSON without trusting its type.
+
+    A truncated write (e.g. USB stick pulled mid-save) or a hand-edited
+    .ccs can leave a numeric field as null, a string, or missing entirely.
+    Without this, the bad value doesn't fail at load time -- it fails
+    later, live, the first time the cue fires (e.g. TypeError comparing
+    a float and a str inside the 300ms UI timer tick).
+    """
+    try:
+        v = data.get(key, default)
+        if v is None:
+            return default
+        return cast(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def cue_to_dict(cue):
     return {
         "id": cue.id,
@@ -258,7 +276,8 @@ def cue_to_dict(cue):
 
 
 def cue_from_dict(data):
-    cue = Cue(data.get("number", 1), data.get("name", "Untitled"), data.get("cue_type", "Audio"))
+    safe_number = _safe_num(data, "number", 1, float)
+    cue = Cue(safe_number, data.get("name", "Untitled"), data.get("cue_type", "Audio"))
     cue.id = data.get("id", str(uuid.uuid4()))
     cue.follow_mode = data.get("follow_mode", "Auto-Ready")
     cue.is_group = data.get("is_group", False)
@@ -268,24 +287,24 @@ def cue_from_dict(data):
     cue.group_mode = raw_mode if raw_mode in ("organizational", "timeline") else "organizational"
     cue.group_children = data.get("group_children", [])
     cue.parent_id = data.get("parent_id")
-    cue.timeline_offset_ms = int(data.get("timeline_offset_ms", 0) or 0)
+    cue.timeline_offset_ms = _safe_num(data, "timeline_offset_ms", 0, int)
     cue.media_path = data.get("media_path", "")
-    cue.duration_ms = data.get("duration_ms", 0)
+    cue.duration_ms = _safe_num(data, "duration_ms", 0, int)
     cue.audio_device_id = data.get("audio_device_id")
-    cue.volume = float(data.get("volume", 1.0))
+    cue.volume = _safe_num(data, "volume", 1.0, float)
     cue.screen_name = data.get("screen_name")
     cue.size_mode = data.get("size_mode", "percent")
-    cue.width_px = data.get("width_px", 1280)
-    cue.height_px = data.get("height_px", 720)
-    cue.width_percent = data.get("width_percent", 80.0)
-    cue.height_percent = data.get("height_percent", 60.0)
-    cue.pos_x = data.get("pos_x")
-    cue.pos_y = data.get("pos_y")
-    cue.layer = data.get("layer", 50)
-    cue.opacity = data.get("opacity", 1.0)
+    cue.width_px = _safe_num(data, "width_px", 1280, int)
+    cue.height_px = _safe_num(data, "height_px", 720, int)
+    cue.width_percent = _safe_num(data, "width_percent", 80.0, float)
+    cue.height_percent = _safe_num(data, "height_percent", 60.0, float)
+    cue.pos_x = _safe_num(data, "pos_x", None, int) if data.get("pos_x") is not None else None
+    cue.pos_y = _safe_num(data, "pos_y", None, int) if data.get("pos_y") is not None else None
+    cue.layer = _safe_num(data, "layer", 50, int)
+    cue.opacity = _safe_num(data, "opacity", 1.0, float)
     cue.user_moved = data.get("user_moved", False)
     cue.text = data.get("text", "")
-    cue.font_size = data.get("font_size", 64)
+    cue.font_size = _safe_num(data, "font_size", 64, int)
     cue.text_color = data.get("text_color", "#FFFFFF")
     cue.bg_color = data.get("bg_color", "rgba(0,0,0,160)")
     cue.image_path = data.get("image_path", "")
@@ -295,13 +314,13 @@ def cue_from_dict(data):
     cue.video_loop = data.get("video_loop", False)
     cue.video_muted = data.get("video_muted", False)
     cue.pdf_path = data.get("pdf_path", "")
-    cue.pdf_page = data.get("pdf_page", 0)
+    cue.pdf_page = _safe_num(data, "pdf_page", 0, int)
     cue.pdf_zoom_mode = data.get("pdf_zoom_mode", "Fit")
     cue.pdf_multipage = bool(data.get("pdf_multipage", False))
     cue.link_url = data.get("link_url", "")
     cue.link_use_system_browser = data.get("link_use_system_browser", False)
     cue.osc_ip = data.get("osc_ip", "127.0.0.1")
-    cue.osc_port = data.get("osc_port", 8000)
+    cue.osc_port = _safe_num(data, "osc_port", 8000, int)
     cue.osc_address = data.get("osc_address", "")
     cue.osc_args = data.get("osc_args", "")
     cue.osc_preset = data.get("osc_preset", "ETC EOS")
@@ -1550,10 +1569,23 @@ class MainWindow(QMainWindow):
         self.cues.clear()
         self.current_cue_id = None
 
+        skipped = 0
         for cdata in data.get("cues", []):
-            self.cues.append(cue_from_dict(cdata))
+            try:
+                self.cues.append(cue_from_dict(cdata))
+            except Exception as e:
+                skipped += 1
+                print(f"Skipped a corrupt cue while loading ({cdata.get('name', '?')!r}): {e}")
 
         self.repair_cue_links()
+
+        if skipped:
+            QMessageBox.warning(
+                self, "Show Partially Loaded",
+                f"{skipped} cue(s) in this file were corrupted and had to be skipped.\n"
+                "Check the remaining cue list before the show, and consider re-saving "
+                "a clean copy once you've confirmed everything is intact."
+            )
 
         self.fade_duration_ms = data.get("fade_duration_ms", 2000)
 
@@ -3160,7 +3192,31 @@ class MainWindow(QMainWindow):
                     parent.group_children.append(c.id)
 
     def start_group_cue(self, cue):
-        """Organizational = first child only. Timeline = fire by timeline_offset_ms."""
+        """Organizational = first child only. Timeline = fire by timeline_offset_ms.
+
+        Guards against a self-referencing or mutually-referencing group
+        (e.g. a hand-edited .ccs where a group lists itself, or lists
+        another group, as a child). The UI blocks nesting groups when
+        dragging, but a loaded file could still contain a cycle -- without
+        this check, firing it recurses into start_cue -> start_group_cue
+        forever and crashes with a RecursionError. Auto-Fire already has
+        an equivalent loop guard; groups didn't.
+        """
+        stack = getattr(self, "_group_start_stack", None)
+        if stack is None:
+            stack = self._group_start_stack = set()
+        if cue.id in stack:
+            self.statusBar.showMessage(
+                f"Group loop detected in \"{cue.name}\" – refusing to start it again"
+            )
+            return
+        stack.add(cue.id)
+        try:
+            self._start_group_cue_inner(cue)
+        finally:
+            stack.discard(cue.id)
+
+    def _start_group_cue_inner(self, cue):
         children = [self.get_cue_by_id(cid) for cid in getattr(cue, "group_children", [])]
         children = [c for c in children if c is not None]
         mode = getattr(cue, "group_mode", "organizational") or "organizational"
@@ -3697,8 +3753,46 @@ class MainWindow(QMainWindow):
 # =====================================================================
 # Application entry point
 # =====================================================================
+def install_excepthook(get_window):
+    """Catch unhandled exceptions from Qt slots/timers.
+
+    Without this, PySide6 tends to hard-abort the process on any uncaught
+    exception raised inside a signal/slot/timer callback -- no dialog, no
+    log, the window just disappears mid-show. This gives the operator a
+    fighting chance to hit Save before things go further sideways, and
+    leaves a crash log next to the exe for post-mortem debugging.
+    """
+    import traceback
+
+    def _hook(exc_type, exc_value, exc_tb):
+        text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        print(text, file=sys.stderr)
+
+        try:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crash_log.txt")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n{text}")
+        except Exception:
+            pass  # logging failed too; don't let that mask the real error
+
+        try:
+            win = get_window()
+            QMessageBox.critical(
+                win, "CueControl — Unexpected Error",
+                f"{exc_type.__name__}: {exc_value}\n\n"
+                "CueControl hit a bug. The cue list is probably still intact —\n"
+                "use File → Save As now, then restart the app before continuing the show.\n\n"
+                "(Details written to crash_log.txt)"
+            )
+        except Exception:
+            pass  # if even the dialog fails, at least stderr/log has it
+
+    sys.excepthook = _hook
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
+    install_excepthook(lambda: window)
     window.show()
     sys.exit(app.exec())
