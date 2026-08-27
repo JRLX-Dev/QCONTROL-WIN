@@ -7,6 +7,8 @@ Built for churches, schools, and small productions that need reliable playback w
 
 **Status:** Alpha — test thoroughly before any live show. Do not use as sole playback on a critical performance until you have dry-run tested your full stack.
 
+**Booth accessibility (Phase 1):** STANDBY/RUNNING is written in the cue list (not color-only). View → UI size 100/125/150%. Help → Keyboard shortcuts (F1). Works with Windows Narrator, Magnifier, and Sticky Keys. Captions on video (Phase 2) are not in this build.
+
 ---
 
 ## Download and run (testers)

@@ -1,5 +1,16 @@
 # Changelog
 
+## Alpha (2026-08-27) — booth accessibility (Phase 1)
+
+### New
+- Cue list writes **STANDBY** / **RUNNING** in the row (and to Narrator) so status is not color-only
+- **View → UI size** 100% / 125% / 150% (remembered). Windows Magnifier still works on top
+- Accessible names on GO / STOP / Fade / cue list / delete / blackout / volume
+- Yellow **focus ring** on transport buttons
+- **Help → Keyboard shortcuts** (F1)
+
+---
+
 ## Alpha (2026-08-26) — atomic save + crash-safety nits
 
 ### Fixed

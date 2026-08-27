@@ -32,9 +32,15 @@ You are in when you see the cue list and a green GO button.
 
 DURING THE SERVICE
 ------------------
-   Spacebar  or  green GO     play the selected cue
+   Spacebar  or  green GO     play the STANDBY cue
    Esc       or  Fade & Stop  fade everything out
    red STOP ALL               cut everything now
+   F1                         keyboard list
+
+The selected cue is labeled STANDBY. A playing cue is labeled RUNNING.
+(Those words are there so you do not have to rely on color.)
+
+Need larger type?  View → UI size → 125% or 150%
 
 File → Open Show  if you need to load a saved .ccs show.
 

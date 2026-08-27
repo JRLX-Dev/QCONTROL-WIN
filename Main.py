@@ -37,9 +37,9 @@ from PySide6.QtWidgets import (
     QSizePolicy, QDialog, QDialogButtonBox, QMessageBox, QAbstractItemView,
     QSlider
 )
-from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect, Signal, QSize
+from PySide6.QtCore import Qt, QTimer, QUrl, QPoint, QRect, Signal, QSize, QSettings
 from PySide6.QtGui import (
-    QColor, QAction, QPainter, QPen, QGuiApplication,
+    QColor, QAction, QActionGroup, QFont, QPainter, QPen, QGuiApplication,
     QMouseEvent, QPixmap, QKeySequence, QShortcut
 )
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
@@ -136,6 +136,39 @@ def device_id_to_str(raw_id):
         return bytes(raw_id).hex()
     except TypeError:
         return str(raw_id)
+
+
+def format_cue_row_text(cue, indent=0, status=""):
+    """Cue-list line. Status is written as STANDBY/RUNNING, not color-only."""
+    num_str = str(int(cue.number)) if cue.number == int(cue.number) else f"{cue.number:.1f}"
+    prefix = "↳  " if indent > 0 else ""
+    text = f"{prefix}{num_str}  –  {cue.name}  ({cue.cue_type})"
+
+    if cue.is_group or cue.cue_type == "Group":
+        mode = getattr(cue, "group_mode", "organizational")
+        text = f"📁 {num_str}  –  {cue.name}  [Group · {mode}]"
+    elif indent > 0 and getattr(cue, "timeline_offset_ms", 0):
+        text += f"  @{cue.timeline_offset_ms}ms"
+
+    if cue.follow_mode != "Off":
+        text += f"  [{cue.follow_mode}]"
+    if cue.duration_ms > 0:
+        text += f"  {cue.duration_ms/1000:.1f}s"
+    if cue.cue_type in ("Text", "Image", "Video", "PDF", "Link"):
+        text += f"  L{cue.layer}"
+    if cue.cue_type in ("Audio", "Video") and cue.volume < 0.995:
+        text += f"  Vol {int(round(cue.volume*100))}%"
+    if cue.cue_type == "Image" and not cue.image_persistent:
+        text += "  [non-persist]"
+    if cue.cue_type == "Link" and cue.link_use_system_browser:
+        text += "  [system]"
+    if cue.cue_type == "OSC":
+        text += f"  → {cue.osc_ip}:{cue.osc_port}"
+    if cue.cue_type == "Wait":
+        text += f"  ⏱ {cue.duration_ms/1000:.1f}s"
+    if status:
+        text = f"{status}  {text}"
+    return text
 
 
 # =====================================================================
@@ -369,50 +402,32 @@ def cue_from_dict(data):
 # SECTION: Cue list row widget
 # =====================================================================
 class CueRowWidget(QWidget):
+    """One cue-list row. Accessible name matches the visible STANDBY/RUNNING line."""
     delete_clicked = Signal(str)
 
-    def __init__(self, cue, indent=0, parent=None):
+    def __init__(self, cue, indent=0, status="", row_h=36, parent=None):
         super().__init__(parent)
         self.cue_id = cue.id
+        self._indent = indent
+        self.setFixedHeight(row_h)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8 + indent * 28, 4, 8, 4)
         layout.setSpacing(10)
 
         num_str = str(int(cue.number)) if cue.number == int(cue.number) else f"{cue.number:.1f}"
-        prefix = "↳  " if indent > 0 else ""
-        text = f"{prefix}{num_str}  –  {cue.name}  ({cue.cue_type})"
-
-        if cue.is_group or cue.cue_type == "Group":
-            mode = getattr(cue, "group_mode", "organizational")
-            text = f"📁 {num_str}  –  {cue.name}  [Group · {mode}]"
-        elif indent > 0 and getattr(cue, "timeline_offset_ms", 0):
-            text += f"  @{cue.timeline_offset_ms}ms"
-
-        if cue.follow_mode != "Off":
-            text += f"  [{cue.follow_mode}]"
-        if cue.duration_ms > 0:
-            text += f"  {cue.duration_ms/1000:.1f}s"
-        if cue.cue_type in ("Text", "Image", "Video", "PDF", "Link"):
-            text += f"  L{cue.layer}"
-        if cue.cue_type in ("Audio", "Video") and cue.volume < 0.995:
-            text += f"  Vol {int(round(cue.volume*100))}%"
-        if cue.cue_type == "Image" and not cue.image_persistent:
-            text += "  [non-persist]"
-        if cue.cue_type == "Link" and cue.link_use_system_browser:
-            text += "  [system]"
-        if cue.cue_type == "OSC":
-            text += f"  → {cue.osc_ip}:{cue.osc_port}"
-        if cue.cue_type == "Wait":
-            text += f"  ⏱ {cue.duration_ms/1000:.1f}s"
+        text = format_cue_row_text(cue, indent, status)
 
         self.label = QLabel(text)
-        self.label.setStyleSheet("background: transparent; color: #ddd;")
         layout.addWidget(self.label, 1)
 
         self.btn = QPushButton("✕")
-        self.btn.setFixedSize(24, 24)
+        self.btn.setFixedSize(max(24, row_h - 12), max(24, row_h - 12))
         self.btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn.setToolTip(f"Delete cue {num_str} {cue.name}")
+        self.btn.setAccessibleName(f"Delete cue {num_str} {cue.name}")
+        self.btn.setAccessibleDescription("Removes this cue from the show")
         self.btn.setStyleSheet("""
             QPushButton {
                 background-color: #5a1a1a; color: #ffb0b0;
@@ -420,10 +435,21 @@ class CueRowWidget(QWidget):
                 font-weight: bold; font-size: 13px;
             }
             QPushButton:hover { background-color: #a03030; color: white; }
+            QPushButton:focus { border: 2px solid #FFE14D; }
         """)
-        self.btn.setToolTip("Delete cue")
         self.btn.clicked.connect(lambda: self.delete_clicked.emit(self.cue_id))
         layout.addWidget(self.btn)
+        self.apply_status(text, status)
+
+    def apply_status(self, text, status):
+        self.label.setText(text)
+        if status == "RUNNING":
+            self.label.setStyleSheet("background: transparent; color: #7CFF9A; font-weight: bold;")
+        elif status == "STANDBY":
+            self.label.setStyleSheet("background: transparent; color: #FFE14D; font-weight: bold;")
+        else:
+            self.label.setStyleSheet("background: transparent; color: #ddd; font-weight: normal;")
+        self.setAccessibleName(text)
 
 
 # =====================================================================
@@ -1149,6 +1175,8 @@ class MainWindow(QMainWindow):
         self.web_windows = {}
         self.display_defaults = {}
         self.blackout_window = BlackoutWindow()
+        self.ui_scale = 100
+        self._base_font_pt = QApplication.instance().font().pointSizeF() or 9.0
 
         self.device_check_timer = QTimer(self)
         self.device_check_timer.timeout.connect(self.check_audio_devices)
@@ -1159,9 +1187,15 @@ class MainWindow(QMainWindow):
         self.screen_check_timer.start(4000)
 
         self.build_ui()
+        try:
+            saved_scale = int(QSettings("CueControl", "CueControl").value("ui_scale", 100))
+        except (TypeError, ValueError):
+            saved_scale = 100
+        self.apply_ui_scale(saved_scale, save=False, refresh=False)
         self.refresh_cue_list()
         self.update_running_list()
         self.update_window_title()
+        self.cue_list.setFocus(Qt.FocusReason.OtherFocusReason)
 
         self.ui_timer = QTimer(self)
         self.ui_timer.timeout.connect(self.update_running_list)
@@ -1760,6 +1794,8 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Cue Types")
         toolbar.setOrientation(Qt.Vertical)
         toolbar.setFixedWidth(160)
+        toolbar.setAccessibleName("Add cues")
+        toolbar.setMovable(False)
         self.addToolBar(Qt.LeftToolBarArea, toolbar)
 
         toolbar.addWidget(QLabel("  Add Cues"))
@@ -1796,6 +1832,10 @@ class MainWindow(QMainWindow):
         split = QHBoxLayout()
 
         self.cue_list = QListWidget()
+        self.cue_list.setAccessibleName("Cue list")
+        self.cue_list.setAccessibleDescription(
+            "Standby cue is selected. Space or GO fires it. Status is spoken as STANDBY or RUNNING."
+        )
         self.cue_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.cue_list.itemClicked.connect(self.on_cue_selected)
 
@@ -1815,6 +1855,7 @@ class MainWindow(QMainWindow):
 
         right_tabs = QTabWidget()
         right_tabs.setMinimumWidth(520)
+        right_tabs.setAccessibleName("Cue properties and running cues")
 
         # ---------- Properties tab ----------
         prop_tab = QWidget()
@@ -1826,10 +1867,12 @@ class MainWindow(QMainWindow):
         self.number_spin.setDecimals(1)
         self.number_spin.setSingleStep(1.0)
         self.number_spin.editingFinished.connect(self.apply_cue_number)
+        self.number_spin.setAccessibleName("Cue number")
         form.addRow("Cue Number:", self.number_spin)
 
         self.name_edit = QLineEdit()
         self.name_edit.editingFinished.connect(self.apply_name_change)
+        self.name_edit.setAccessibleName("Cue name")
         form.addRow("Name:", self.name_edit)
 
         self.type_label = QLabel("-")
@@ -1866,6 +1909,8 @@ class MainWindow(QMainWindow):
         self.volume_slider.setValue(100)
         self.volume_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.volume_slider.setTickInterval(10)
+        self.volume_slider.setAccessibleName("Volume")
+        self.volume_slider.setAccessibleDescription("Cue volume, 0 to 100 percent")
         self.volume_slider.valueChanged.connect(self.apply_volume)
 
         self.volume_spin = QSpinBox()
@@ -1892,6 +1937,8 @@ class MainWindow(QMainWindow):
         screen_row.addWidget(self.screen_combo, 1)
         self.blackout_btn = QPushButton("Blackout")
         self.blackout_btn.setCheckable(True)
+        self.blackout_btn.setAccessibleName("Blackout")
+        self.blackout_btn.setAccessibleDescription("Hide all projector output until turned off")
         self.blackout_btn.toggled.connect(self.toggle_blackout)
         screen_row.addWidget(self.blackout_btn)
         ol.addLayout(screen_row)
@@ -2222,6 +2269,7 @@ class MainWindow(QMainWindow):
         rl = QVBoxLayout(run_tab)
         rl.addWidget(QLabel("Cues Currently Running"))
         self.running_list = QListWidget()
+        self.running_list.setAccessibleName("Cues currently running")
         rl.addWidget(self.running_list)
         right_tabs.addTab(run_tab, "Cues Running")
 
@@ -2231,6 +2279,7 @@ class MainWindow(QMainWindow):
         # GO / STOP bar – equal-width rounded controls
         bar = QFrame()
         bar.setObjectName("transportBar")
+        self.transport_bar = bar
         bar.setFixedHeight(88)
         bar.setStyleSheet("""
             QFrame#transportBar {
@@ -2247,7 +2296,7 @@ class MainWindow(QMainWindow):
                 color: white;
                 font-size: 18px;
                 font-weight: bold;
-                border: none;
+                border: 3px solid transparent;
                 border-radius: 12px;
                 padding: 14px 20px;
                 min-height: 56px;
@@ -2256,9 +2305,15 @@ class MainWindow(QMainWindow):
                 padding-top: 16px;
                 padding-bottom: 12px;
             }
+            QPushButton:focus {
+                border: 3px solid #FFE14D;
+            }
         """
 
         self.go_btn = QPushButton("GO")
+        self.go_btn.setAccessibleName("GO")
+        self.go_btn.setAccessibleDescription("Fire the standby cue. Keyboard shortcut: Space")
+        self.go_btn.setToolTip("GO  (Space)")
         self.go_btn.setStyleSheet(btn_base + """
             QPushButton {
                 background-color: #00AA00;
@@ -2273,6 +2328,9 @@ class MainWindow(QMainWindow):
         self.go_btn.clicked.connect(self.go_pressed)
 
         self.stop_btn = QPushButton("STOP ALL")
+        self.stop_btn.setAccessibleName("STOP ALL")
+        self.stop_btn.setAccessibleDescription("Hard-stop every running cue")
+        self.stop_btn.setToolTip("STOP ALL")
         self.stop_btn.setStyleSheet(btn_base + """
             QPushButton {
                 background-color: #CC0000;
@@ -2287,6 +2345,9 @@ class MainWindow(QMainWindow):
         self.stop_btn.clicked.connect(self.stop_all)
 
         self.fade_btn = QPushButton("Fade & Stop")
+        self.fade_btn.setAccessibleName("Fade and Stop")
+        self.fade_btn.setAccessibleDescription("Fade out then stop. Keyboard shortcut: Escape")
+        self.fade_btn.setToolTip("Fade & Stop  (Esc)")
         self.fade_btn.setStyleSheet(btn_base + """
             QPushButton {
                 background-color: #CC7700;
@@ -2366,23 +2427,55 @@ class MainWindow(QMainWindow):
         defaults_act.triggered.connect(self.edit_default_positions)
         settings.addAction(defaults_act)
 
+        view_menu = menubar.addMenu("View")
+        scale_group = QActionGroup(self)
+        scale_group.setExclusive(True)
+        self._scale_actions = {}
+        for pct, label in ((100, "UI size 100%"), (125, "UI size 125%"), (150, "UI size 150%")):
+            act = QAction(label, self)
+            act.setCheckable(True)
+            act.setData(pct)
+            scale_group.addAction(act)
+            view_menu.addAction(act)
+            self._scale_actions[pct] = act
+            act.triggered.connect(lambda checked, p=pct: checked and self.apply_ui_scale(p))
+
+        help_menu = menubar.addMenu("Help")
+        keys_act = QAction("Keyboard shortcuts", self)
+        keys_act.setShortcut(QKeySequence.StandardKey.HelpContents)
+        keys_act.triggered.connect(self.show_keyboard_help)
+        help_menu.addAction(keys_act)
+
     # ------------------------------------------------------------------
     # Core list / selection (hierarchical)
     # ------------------------------------------------------------------
+    def cue_status(self, cue):
+        if cue.id in self.active_cues:
+            return "RUNNING"
+        if cue.id == self.current_cue_id:
+            return "STANDBY"
+        return ""
+
     def refresh_cue_list(self):
         current_id = self.current_cue_id
         self.cue_list.clear()
+        row_h = max(36, int(36 * getattr(self, "ui_scale", 100) / 100))
 
         top_level = [c for c in self.cues if not c.parent_id]
         top_level.sort(key=lambda c: c.number)
 
         def add_row(cue, indent=0):
+            status = self.cue_status(cue)
+            text = format_cue_row_text(cue, indent=indent, status=status)
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, cue.id)
-            item.setSizeHint(QSize(0, 36))
+            item.setData(Qt.ItemDataRole.UserRole + 1, indent)
+            item.setText(text)  # Narrator / UIA; hidden once the widget is attached
+            item.setToolTip(text)
+            item.setSizeHint(QSize(0, row_h))
             self.cue_list.addItem(item)
 
-            row = CueRowWidget(cue, indent=indent)
+            row = CueRowWidget(cue, indent=indent, status=status, row_h=row_h)
             row.delete_clicked.connect(self.delete_cue_by_id)
             self.cue_list.setItemWidget(item, row)
 
@@ -2398,6 +2491,65 @@ class MainWindow(QMainWindow):
 
         for cue in top_level:
             add_row(cue)
+
+    def update_cue_row_status(self):
+        """Refresh STANDBY/RUNNING labels without rebuilding the list."""
+        for i in range(self.cue_list.count()):
+            item = self.cue_list.item(i)
+            cue = self.get_cue_by_id(item.data(Qt.ItemDataRole.UserRole))
+            if not cue:
+                continue
+            indent = item.data(Qt.ItemDataRole.UserRole + 1) or 0
+            status = self.cue_status(cue)
+            text = format_cue_row_text(cue, indent=indent, status=status)
+            if item.text() != text:
+                item.setText(text)
+                item.setToolTip(text)
+            row = self.cue_list.itemWidget(item)
+            if row is not None:
+                row.apply_status(text, status)
+
+    def apply_ui_scale(self, percent, save=True, refresh=True):
+        """Scale console type. 100 / 125 / 150. Windows Magnifier still works on top."""
+        try:
+            percent = int(percent)
+        except (TypeError, ValueError):
+            percent = 100
+        if percent not in (100, 125, 150):
+            percent = 100
+        self.ui_scale = percent
+        app = QApplication.instance()
+        font = QFont(app.font())
+        font.setPointSizeF(self._base_font_pt * percent / 100.0)
+        app.setFont(font)
+        if hasattr(self, "transport_bar"):
+            self.transport_bar.setFixedHeight(max(72, int(88 * percent / 100)))
+        acts = getattr(self, "_scale_actions", {})
+        if percent in acts:
+            acts[percent].setChecked(True)
+        if save:
+            QSettings("CueControl", "CueControl").setValue("ui_scale", percent)
+        if refresh:
+            self.refresh_cue_list()
+
+    def show_keyboard_help(self):
+        QMessageBox.information(
+            self, "Keyboard shortcuts",
+            "Booth\n"
+            "  Space              GO (fire the STANDBY cue)\n"
+            "  Esc                Fade & Stop\n"
+            "  Ctrl+Delete        Delete selected cue\n"
+            "  Ctrl+S / O / N     Save / Open / New\n"
+            "  F1                 This list\n"
+            "\n"
+            "Cue list\n"
+            "  Click or arrow keys choose STANDBY\n"
+            "  Status is written as STANDBY or RUNNING\n"
+            "    (not color-only — Narrator reads the same words)\n"
+            "\n"
+            "View → UI size → 100% / 125% / 150%\n"
+            "Windows Magnifier, Narrator, and Sticky Keys still work.\n"
+        )
 
     def apply_cue_number(self):
         cue = self.get_current_cue()
@@ -3569,7 +3721,7 @@ class MainWindow(QMainWindow):
                 )
             else:
                 t = "∞"
-            self.running_list.addItem(f"▶ {cue.number} - {cue.name}   [{t}]")
+            self.running_list.addItem(f"RUNNING  {cue.number} - {cue.name}   [{t}]")
 
         for cid in finished:
             cue = self.active_cues[cid]["cue"] if cid in self.active_cues else None
@@ -3582,6 +3734,7 @@ class MainWindow(QMainWindow):
                     self.start_cue(nxt)
 
         self.tick_timelines()
+        self.update_cue_row_status()
 
     def _add_and_select(self, cue):
         self.cues.append(cue)
