@@ -1,5 +1,16 @@
 # Changelog
 
+## Alpha (2026-08-27) — portable overlay positions
+
+### New
+- Overlay position/size save as **percent of the output screen**, not pixels on a named Windows monitor
+- Cues have an **output role** (House / Stage / Confidence / Booth)
+- **Settings → Map displays…** points those roles at whatever is plugged in at the venue
+- Plugging in a projector no longer kills running overlays — they remap
+- Old `.ccs` files still load; absolute pixels are used only if they already sit on that screen
+
+---
+
 ## Alpha (2026-08-27) — booth accessibility (Phase 1)
 
 ### New

@@ -171,6 +171,38 @@ def format_cue_row_text(cue, indent=0, status=""):
     return text
 
 
+DISPLAY_ROLES = (
+    ("house", "House / projector"),
+    ("stage", "Stage / foldback"),
+    ("confidence", "Confidence monitor"),
+    ("console", "Booth / this PC"),
+)
+
+
+def write_rel_pos(cue, geo, sgeo):
+    """Store overlay geometry as % of the target screen (plus pixel snapshot)."""
+    if sgeo is None or sgeo.width() <= 0 or sgeo.height() <= 0:
+        return
+    cue.pos_x = int(geo.x())
+    cue.pos_y = int(geo.y())
+    cue.width_px = int(geo.width())
+    cue.height_px = int(geo.height())
+    cue.pos_x_percent = round((geo.x() - sgeo.x()) / sgeo.width() * 100.0, 2)
+    cue.pos_y_percent = round((geo.y() - sgeo.y()) / sgeo.height() * 100.0, 2)
+    cue.width_percent = round(geo.width() / sgeo.width() * 100.0, 1)
+    cue.height_percent = round(geo.height() / sgeo.height() * 100.0, 1)
+    cue.user_moved = True
+
+
+def _safe_pct(value, default=None):
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 # =====================================================================
 # SECTION: Cue data model
 # =====================================================================
@@ -194,6 +226,7 @@ class Cue:
 
         # Overlay shared
         self.screen_name = None
+        self.display_role = "house"
         self.size_mode = "percent"
         self.width_px = 1280
         self.height_px = 720
@@ -201,6 +234,8 @@ class Cue:
         self.height_percent = 60.0
         self.pos_x = None
         self.pos_y = None
+        self.pos_x_percent = None
+        self.pos_y_percent = None
         self.layer = 50
         self.opacity = 1.0
         self.user_moved = False
@@ -311,6 +346,7 @@ def cue_to_dict(cue):
         "audio_device_id": cue.audio_device_id,
         "volume": cue.volume,
         "screen_name": cue.screen_name,
+        "display_role": getattr(cue, "display_role", "house"),
         "size_mode": cue.size_mode,
         "width_px": cue.width_px,
         "height_px": cue.height_px,
@@ -318,6 +354,8 @@ def cue_to_dict(cue):
         "height_percent": cue.height_percent,
         "pos_x": cue.pos_x,
         "pos_y": cue.pos_y,
+        "pos_x_percent": getattr(cue, "pos_x_percent", None),
+        "pos_y_percent": getattr(cue, "pos_y_percent", None),
         "layer": cue.layer,
         "opacity": cue.opacity,
         "user_moved": cue.user_moved,
@@ -364,6 +402,8 @@ def cue_from_dict(data):
     cue.audio_device_id = data.get("audio_device_id")
     cue.volume = _safe_num(data, "volume", 1.0, float)
     cue.screen_name = data.get("screen_name")
+    role = data.get("display_role") or "house"
+    cue.display_role = role if role in {r[0] for r in DISPLAY_ROLES} else "house"
     cue.size_mode = data.get("size_mode", "percent")
     cue.width_px = _safe_num(data, "width_px", 1280, int)
     cue.height_px = _safe_num(data, "height_px", 720, int)
@@ -371,6 +411,8 @@ def cue_from_dict(data):
     cue.height_percent = _safe_num(data, "height_percent", 60.0, float)
     cue.pos_x = _safe_num(data, "pos_x", None, int) if data.get("pos_x") is not None else None
     cue.pos_y = _safe_num(data, "pos_y", None, int) if data.get("pos_y") is not None else None
+    cue.pos_x_percent = _safe_pct(data.get("pos_x_percent"))
+    cue.pos_y_percent = _safe_pct(data.get("pos_y_percent"))
     cue.layer = _safe_num(data, "layer", 50, int)
     cue.opacity = _safe_num(data, "opacity", 1.0, float)
     cue.user_moved = data.get("user_moved", False)
@@ -613,18 +655,42 @@ class OverlayWindow(QWidget):
         self._resize_edge = None
         # Persist geometry after every drag / resize in edit mode
         if self.edit_mode and self.current_cue is not None:
-            geo = self.geometry()
-            self.current_cue.pos_x = geo.x()
-            self.current_cue.pos_y = geo.y()
-            self.current_cue.width_px = geo.width()
-            self.current_cue.height_px = geo.height()
-            self.current_cue.user_moved = True
+            self.persist_geometry()
         event.accept()
+
+    def persist_geometry(self, screen=None):
+        """Write % of the output screen so a 1080p build still sits right on 4K."""
+        cue = self.current_cue
+        if cue is None:
+            return
+        try:
+            geo = self.geometry()
+        except RuntimeError:
+            return
+        if screen is None:
+            try:
+                handle = self.windowHandle()
+                if handle is not None:
+                    screen = handle.screen()
+            except RuntimeError:
+                screen = None
+        if screen is None:
+            try:
+                screen = QGuiApplication.screenAt(geo.center()) or QGuiApplication.primaryScreen()
+            except RuntimeError:
+                return
+        try:
+            sgeo = screen.geometry()
+            write_rel_pos(cue, geo, sgeo)
+            cue.screen_name = screen.name()
+        except RuntimeError:
+            pass
 
     def _on_resized(self):
         pass
 
     def apply_geometry(self, cue, screen, defaults):
+        defaults = defaults or {}
         if screen is None:
             try:
                 screen = QGuiApplication.primaryScreen()
@@ -634,29 +700,46 @@ class OverlayWindow(QWidget):
             return
 
         try:
-            sgeo = screen.availableGeometry()
+            sgeo = screen.geometry()
         except RuntimeError:
             return
 
-        if cue.user_moved or cue.size_mode == "pixels":
-            w = max(200, cue.width_px)
-            h = max(80, cue.height_px)
+        if cue.size_mode == "percent":
+            w = max(200, int(sgeo.width() * (float(cue.width_percent or 80) / 100.0)))
+            h = max(80, int(sgeo.height() * (float(cue.height_percent or 60) / 100.0)))
         else:
-            w = max(200, int(sgeo.width()  * (cue.width_percent  / 100.0)))
-            h = max(80,  int(sgeo.height() * (cue.height_percent / 100.0)))
+            w = max(200, int(cue.width_px or 1280))
+            h = max(80, int(cue.height_px or 720))
 
-        if cue.user_moved and cue.pos_x is not None and cue.pos_y is not None:
-            self.setGeometry(int(cue.pos_x), int(cue.pos_y), w, h)
+        xpct = getattr(cue, "pos_x_percent", None)
+        ypct = getattr(cue, "pos_y_percent", None)
+        if xpct is None and cue.user_moved and cue.pos_x is not None and cue.pos_y is not None:
+            # Old shows stored virtual-desktop pixels. Use them only if they
+            # already land on this output; otherwise fall through to center.
+            legacy = QRect(int(cue.pos_x), int(cue.pos_y), w, h)
+            if sgeo.intersects(legacy):
+                xpct = (cue.pos_x - sgeo.x()) / max(1, sgeo.width()) * 100.0
+                ypct = (cue.pos_y - sgeo.y()) / max(1, sgeo.height()) * 100.0
+
+        if xpct is not None and ypct is not None:
+            x = sgeo.x() + int(sgeo.width() * float(xpct) / 100.0)
+            y = sgeo.y() + int(sgeo.height() * float(ypct) / 100.0)
+            self.setGeometry(int(x), int(y), w, h)
         else:
             key = {
                 "Text": "text", "Image": "image", "Video": "video",
                 "PDF": "pdf", "Link": "link"
             }.get(cue.cue_type, "text")
-            default_rect = defaults.get(screen.name(), {}).get(key) if screen else None
-            if default_rect and default_rect.isValid():
+            default_rect = None
+            if screen:
+                default_rect = (defaults.get(screen.name(), {}) or {}).get(key)
+                role = getattr(cue, "display_role", None)
+                if default_rect is None and role:
+                    default_rect = (defaults.get(role, {}) or {}).get(key)
+            if default_rect and isinstance(default_rect, QRect) and default_rect.isValid():
                 self.setGeometry(default_rect)
             else:
-                x = sgeo.x() + (sgeo.width()  - w) // 2
+                x = sgeo.x() + (sgeo.width() - w) // 2
                 y = sgeo.y() + (sgeo.height() - h) // 2
                 self.setGeometry(x, y, w, h)
 
@@ -677,13 +760,12 @@ class OverlayWindow(QWidget):
         if screen is None:
             return
         try:
-            geo = screen.availableGeometry()
+            geo = screen.geometry()
             self.move(
                 geo.x() + (geo.width()  - self.width())  // 2,
                 geo.y() + (geo.height() - self.height()) // 2
             )
-            if self.current_cue:
-                self.current_cue.user_moved = True
+            self.persist_geometry(screen)
         except RuntimeError:
             pass
 
@@ -696,7 +778,7 @@ class OverlayWindow(QWidget):
         if screen is None:
             return
         try:
-            geo = screen.availableGeometry()
+            geo = screen.geometry()
             g = self.geometry()
             if edge == "top":
                 self.move(g.x(), geo.y() + 20)
@@ -706,8 +788,7 @@ class OverlayWindow(QWidget):
                 self.move(geo.x() + 20, g.y())
             elif edge == "right":
                 self.move(geo.x() + geo.width() - g.width() - 20, g.y())
-            if self.current_cue:
-                self.current_cue.user_moved = True
+            self.persist_geometry(screen)
         except RuntimeError:
             pass
 
@@ -1139,6 +1220,58 @@ class DefaultPositionsDialog(QDialog):
         self.accept()
 
 
+class DisplayMapDialog(QDialog):
+    """Bind show output roles (House / Stage / …) to the screens plugged in now."""
+
+    def __init__(self, screens, display_map, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Map displays")
+        self.setMinimumWidth(520)
+        self._combos = {}
+        layout = QVBoxLayout(self)
+        note = QLabel(
+            "Build the show on any PC. Positions are stored as a slice of the "
+            "output (percent), not as pixels on a named monitor.\n"
+            "At the venue, point each role at the screen that should play it."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        items = [("(auto)", "")]
+        for s in screens:
+            try:
+                geo = s.geometry()
+                primary = " ★" if s == QGuiApplication.primaryScreen() else ""
+                raw_name = s.name().replace("\\", "")
+                label = f"{raw_name}  {geo.width()}×{geo.height()}{primary}"
+                items.append((label, s.name()))
+            except RuntimeError:
+                continue
+        for role, title in DISPLAY_ROLES:
+            combo = QComboBox()
+            for label, name in items:
+                combo.addItem(label, name)
+            current = (display_map or {}).get(role) or ""
+            idx = combo.findData(current)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.setAccessibleName(title)
+            self._combos[role] = combo
+            form.addRow(title + ":", combo)
+        layout.addLayout(form)
+        self.apply_all = QCheckBox("Point every overlay cue at its role’s screen now")
+        self.apply_all.setChecked(True)
+        layout.addWidget(self.apply_all)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def mapping(self):
+        return {role: combo.currentData() or "" for role, combo in self._combos.items()}
+
+
 # =====================================================================
 # SECTION: Main Window
 # =====================================================================
@@ -1174,6 +1307,8 @@ class MainWindow(QMainWindow):
         self.pdf_windows = {}
         self.web_windows = {}
         self.display_defaults = {}
+        self.display_map = {role: "" for role, _ in DISPLAY_ROLES}
+        self.load_display_map()
         self.blackout_window = BlackoutWindow()
         self.ui_scale = 100
         self._base_font_pt = QApplication.instance().font().pointSizeF() or 9.0
@@ -1239,30 +1374,14 @@ class MainWindow(QMainWindow):
             return
 
         self.available_screen_names = list(current_names)
-        self.statusBar.showMessage("Display configuration changed")
-
-        for window_dict in (self.text_windows, self.image_windows,
-                            self.video_windows, self.pdf_windows, self.web_windows):
-            to_remove = []
-            for cue_id, win in list(window_dict.items()):
-                cue = self.get_cue_by_id(cue_id)
-                if cue and cue.screen_name and cue.screen_name not in current_names:
-                    try:
-                        win.close_window()
-                    except RuntimeError:
-                        pass
-                    to_remove.append(cue_id)
-                    if cue_id in self.active_cues:
-                        del self.active_cues[cue_id]
-            for cid in to_remove:
-                if cid in window_dict:
-                    del window_dict[cid]
-
-        self.update_running_list()
+        n = self.remap_overlay_windows()
+        extra = f" — remapped {n} overlay(s)" if n else ""
+        self.statusBar.showMessage("Display configuration changed" + extra)
 
         cue = self.get_current_cue()
         if cue and cue.cue_type in ("Text", "Image", "Video", "PDF", "Link"):
             self.populate_screen_combo(cue)
+            self.populate_role_combo(cue)
 
     def get_screen_by_name(self, name):
         try:
@@ -1274,6 +1393,135 @@ class MainWindow(QMainWindow):
             return QGuiApplication.primaryScreen()
         except RuntimeError:
             return None
+
+    def load_display_map(self):
+        s = QSettings("CueControl", "CueControl")
+        for role, _ in DISPLAY_ROLES:
+            val = s.value(f"display_map/{role}", "")
+            self.display_map[role] = str(val) if val else ""
+
+    def save_display_map(self):
+        s = QSettings("CueControl", "CueControl")
+        for role, name in self.display_map.items():
+            s.setValue(f"display_map/{role}", name or "")
+
+    def ingest_show_display_map(self, stored):
+        """If the .ccs last-used names exist on this PC, bind those roles."""
+        if not isinstance(stored, dict):
+            return
+        live = set(self.available_screen_names or [])
+        if not live:
+            self.refresh_screens()
+            live = set(self.available_screen_names or [])
+        for role, _ in DISPLAY_ROLES:
+            name = stored.get(role)
+            if name and name in live:
+                self.display_map[role] = name
+        self.save_display_map()
+
+    def resolve_screen(self, cue):
+        """Pick a live QScreen from role map, then last name, then a sensible guess.
+
+        House/Stage on a 2-monitor booth prefer the largest non-primary
+        (the projector) so a laptop-built show lands on the house without
+        a remap click.
+        """
+        try:
+            screens = list(QGuiApplication.screens())
+            primary = QGuiApplication.primaryScreen()
+        except RuntimeError:
+            return None
+        if not screens:
+            return None
+        by_name = {}
+        for s in screens:
+            try:
+                by_name[s.name()] = s
+            except RuntimeError:
+                continue
+
+        role = getattr(cue, "display_role", None) or "house" if cue is not None else "house"
+        mapped = (self.display_map or {}).get(role) or ""
+        if mapped and mapped in by_name:
+            return by_name[mapped]
+        if cue is not None and cue.screen_name and cue.screen_name in by_name:
+            return by_name[cue.screen_name]
+
+        if role in ("house", "stage") and primary is not None and len(screens) > 1:
+            others = [s for s in screens if s is not primary]
+            if others:
+                def area(s):
+                    try:
+                        g = s.geometry()
+                        return g.width() * g.height()
+                    except RuntimeError:
+                        return 0
+                return max(others, key=area)
+        return primary
+
+    def remap_overlay_windows(self):
+        """Re-place live overlays after a display change. Do not kill them."""
+        moved = 0
+        for window_dict in (self.text_windows, self.image_windows,
+                            self.video_windows, self.pdf_windows, self.web_windows):
+            for cue_id, win in list(window_dict.items()):
+                cue = self.get_cue_by_id(cue_id)
+                if not cue:
+                    continue
+                screen = self.resolve_screen(cue)
+                if screen is None:
+                    continue
+                try:
+                    new_name = screen.name()
+                except RuntimeError:
+                    continue
+                if cue.screen_name != new_name:
+                    cue.screen_name = new_name
+                    moved += 1
+                try:
+                    if win.isVisible():
+                        win.apply_geometry(cue, screen, self.display_defaults)
+                except RuntimeError:
+                    pass
+        return moved
+
+    def apply_display_map_to_cues(self):
+        n = 0
+        for cue in self.cues:
+            if cue.cue_type not in ("Text", "Image", "Video", "PDF", "Link"):
+                continue
+            screen = self.resolve_screen(cue)
+            if screen is None:
+                continue
+            try:
+                name = screen.name()
+            except RuntimeError:
+                continue
+            if cue.screen_name != name:
+                cue.screen_name = name
+                n += 1
+        self.remap_overlay_windows()
+        return n
+
+    def edit_display_map(self):
+        try:
+            screens = QGuiApplication.screens()
+        except RuntimeError:
+            screens = []
+        dlg = DisplayMapDialog(screens, self.display_map, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        self.display_map = dlg.mapping()
+        self.save_display_map()
+        extra = ""
+        if dlg.apply_all.isChecked():
+            n = self.apply_display_map_to_cues()
+            extra = f" — {n} cue(s) pointed at this PC"
+        self.statusBar.showMessage("Display map saved" + extra)
+        cue = self.get_current_cue()
+        if cue and cue.cue_type in ("Text", "Image", "Video", "PDF", "Link"):
+            self.populate_screen_combo(cue)
+            self.populate_role_combo(cue)
 
     def screen_display_name(self, screen):
         if screen is None:
@@ -1316,60 +1564,76 @@ class MainWindow(QMainWindow):
 
         self.screen_combo.blockSignals(False)
 
+    def populate_role_combo(self, cue=None):
+        if not hasattr(self, "role_combo"):
+            return
+        self.role_combo.blockSignals(True)
+        role = getattr(cue, "display_role", "house") if cue else "house"
+        idx = self.role_combo.findData(role)
+        self.role_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.role_combo.blockSignals(False)
+
+    def apply_display_role(self, index):
+        cue = self.get_current_cue()
+        if not cue or cue.cue_type not in ("Text", "Image", "Video", "PDF", "Link"):
+            return
+        role = self.role_combo.itemData(index) or "house"
+        cue.display_role = role
+        screen = self.resolve_screen(cue)
+        if screen is not None:
+            try:
+                cue.screen_name = screen.name()
+            except RuntimeError:
+                pass
+            self.populate_screen_combo(cue)
+            win = (self.text_windows.get(cue.id) or self.image_windows.get(cue.id) or
+                   self.video_windows.get(cue.id) or self.pdf_windows.get(cue.id) or
+                   self.web_windows.get(cue.id))
+            if win and win.isVisible():
+                win.apply_geometry(cue, screen, self.display_defaults)
+
     def save_window_size_to_cue(self, cue, win):
         if not win or not cue:
             return
+        if hasattr(win, "persist_geometry"):
+            win.current_cue = cue
+            win.persist_geometry(self.resolve_screen(cue))
+        else:
+            try:
+                geo = win.geometry()
+                screen = self.resolve_screen(cue)
+                if screen is None:
+                    return
+                write_rel_pos(cue, geo, screen.geometry())
+                cue.screen_name = screen.name()
+            except RuntimeError:
+                return
 
-        try:
-            geo = win.geometry()
-        except RuntimeError:
-            return
+        self.populate_screen_combo(cue)
+        self.populate_role_combo(cue)
 
-        screen = self.get_screen_by_name(cue.screen_name)
-        if screen is None:
-            return
+        if hasattr(self, "width_px_spin"):
+            for spin, val in (
+                (self.width_px_spin, cue.width_px),
+                (self.height_px_spin, cue.height_px),
+                (self.width_percent_spin, cue.width_percent),
+                (self.height_percent_spin, cue.height_percent),
+            ):
+                spin.blockSignals(True)
+                spin.setValue(val)
+                spin.blockSignals(False)
 
-        try:
-            sgeo = screen.availableGeometry()
-        except RuntimeError:
-            return
-
-        cue.width_px = geo.width()
-        cue.height_px = geo.height()
-        cue.width_percent = round(geo.width() / max(1, sgeo.width()) * 100, 1)
-        cue.height_percent = round(geo.height() / max(1, sgeo.height()) * 100, 1)
-
-        cue.pos_x = geo.x()
-        cue.pos_y = geo.y()
-        cue.user_moved = True
-
-        try:
-            handle = win.windowHandle()
-            if handle is not None and handle.screen() is not None:
-                cue.screen_name = handle.screen().name()
-                self.populate_screen_combo(cue)
-        except RuntimeError:
-            pass
-
-        self.width_px_spin.blockSignals(True)
-        self.width_px_spin.setValue(cue.width_px)
-        self.width_px_spin.blockSignals(False)
-
-        self.height_px_spin.blockSignals(True)
-        self.height_px_spin.setValue(cue.height_px)
-        self.height_px_spin.blockSignals(False)
-
-        self.width_percent_spin.blockSignals(True)
-        self.width_percent_spin.setValue(cue.width_percent)
-        self.width_percent_spin.blockSignals(False)
-
-        self.height_percent_spin.blockSignals(True)
-        self.height_percent_spin.setValue(cue.height_percent)
-        self.height_percent_spin.blockSignals(False)
-
-        self.statusBar.showMessage(
-            f"Position locked: {cue.width_px}×{cue.height_px} @ ({cue.pos_x},{cue.pos_y}) on {cue.screen_name or 'primary'}"
-        )
+        xp = getattr(cue, "pos_x_percent", None)
+        yp = getattr(cue, "pos_y_percent", None)
+        if xp is not None and yp is not None:
+            self.statusBar.showMessage(
+                f"Position locked: {xp:.0f}%, {yp:.0f}% of "
+                f"{getattr(cue, 'display_role', 'house')}  ({cue.width_percent:.0f}×{cue.height_percent:.0f}%)"
+            )
+        else:
+            self.statusBar.showMessage(
+                f"Position locked: {cue.width_px}×{cue.height_px} @ ({cue.pos_x},{cue.pos_y})"
+            )
 
       # ------------------------------------------------------------------
     # Drag & Drop
@@ -1606,8 +1870,9 @@ class MainWindow(QMainWindow):
                 path += ".ccs"
 
         data = {
-            "version": 1,
+            "version": 2,
             "fade_duration_ms": self.fade_duration_ms,
+            "display_map": dict(self.display_map),
             "display_defaults": {
                 k: {kk: [v.x(), v.y(), v.width(), v.height()]
                     for kk, v in d.items() if isinstance(v, QRect)}
@@ -1687,10 +1952,16 @@ class MainWindow(QMainWindow):
                         except (TypeError, ValueError):
                             pass
 
+        self.ingest_show_display_map(data.get("display_map"))
+        n = self.apply_display_map_to_cues()
+
         self.current_show_path = path
         self.refresh_cue_list()
         self.update_window_title()
-        self.statusBar.showMessage(f"Loaded: {os.path.basename(path)}  ({len(self.cues)} cues)")
+        extra = f"  ·  {n} overlay(s) mapped to this PC" if n else ""
+        self.statusBar.showMessage(
+            f"Loaded: {os.path.basename(path)}  ({len(self.cues)} cues){extra}"
+        )
 
         if self.cues:
             first = sorted(self.cues, key=lambda c: c.number)[0]
@@ -1929,6 +2200,17 @@ class MainWindow(QMainWindow):
         # Overlay group
         self.overlay_group = QGroupBox("Display / Layer / Opacity / Size")
         ol = QVBoxLayout(self.overlay_group)
+
+        role_row = QHBoxLayout()
+        role_row.addWidget(QLabel("Output:"))
+        self.role_combo = QComboBox()
+        for key, title in DISPLAY_ROLES:
+            self.role_combo.addItem(title, key)
+        self.role_combo.setAccessibleName("Output role")
+        self.role_combo.setToolTip("House / Stage / Confidence stay with the show. Map them to this PC's screens under Settings.")
+        self.role_combo.currentIndexChanged.connect(self.apply_display_role)
+        role_row.addWidget(self.role_combo, 1)
+        ol.addLayout(role_row)
 
         screen_row = QHBoxLayout()
         screen_row.addWidget(QLabel("Display:"))
@@ -2426,6 +2708,9 @@ class MainWindow(QMainWindow):
         defaults_act = QAction("Default Overlay Positions...", self)
         defaults_act.triggered.connect(self.edit_default_positions)
         settings.addAction(defaults_act)
+        map_act = QAction("Map displays…", self)
+        map_act.triggered.connect(self.edit_display_map)
+        settings.addAction(map_act)
 
         view_menu = menubar.addMenu("View")
         scale_group = QActionGroup(self)
@@ -2708,6 +2993,7 @@ class MainWindow(QMainWindow):
             self.volume_spin.blockSignals(False)
 
         if is_overlay:
+            self.populate_role_combo(cue)
             self.populate_screen_combo(cue)
             self.layer_spin.blockSignals(True)
             self.layer_spin.setValue(cue.layer)
@@ -2950,7 +3236,7 @@ class MainWindow(QMainWindow):
         if cue and cue.cue_type == "Text":
             win = self.text_windows.get(cue.id)
             if win and win.current_cue is cue:
-                win.show_text(cue, self.get_screen_by_name(cue.screen_name),
+                win.show_text(cue, self.resolve_screen(cue),
                              self.display_defaults, steal_focus=False)
 
     def pick_text_color(self):
@@ -2966,7 +3252,17 @@ class MainWindow(QMainWindow):
     def apply_screen(self, index):
         cue = self.get_current_cue()
         if cue and cue.cue_type in ("Text", "Image", "Video", "PDF", "Link"):
-            cue.screen_name = self.screen_combo.itemData(index)
+            name = self.screen_combo.itemData(index)
+            cue.screen_name = name
+            role = getattr(cue, "display_role", "house") or "house"
+            if name:
+                self.display_map[role] = name
+                self.save_display_map()
+            win = (self.text_windows.get(cue.id) or self.image_windows.get(cue.id) or
+                   self.video_windows.get(cue.id) or self.pdf_windows.get(cue.id) or
+                   self.web_windows.get(cue.id))
+            if win and win.isVisible():
+                win.apply_geometry(cue, self.resolve_screen(cue), self.display_defaults)
 
     def apply_layer(self, value):
         cue = self.get_current_cue()
@@ -3021,7 +3317,7 @@ class MainWindow(QMainWindow):
                self.video_windows.get(cue.id) or self.pdf_windows.get(cue.id) or
                self.web_windows.get(cue.id))
         if win and win.current_cue is cue:
-            screen = self.get_screen_by_name(cue.screen_name)
+            screen = self.resolve_screen(cue)
             win.apply_geometry(cue, screen, self.display_defaults)
 
     def browse_image(self):
@@ -3038,7 +3334,7 @@ class MainWindow(QMainWindow):
             self.refresh_cue_list()
             win = self.image_windows.get(cue.id)
             if win and win.current_cue is cue:
-                win.show_image(cue, self.get_screen_by_name(cue.screen_name), self.display_defaults)
+                win.show_image(cue, self.resolve_screen(cue), self.display_defaults)
 
     def apply_scale_mode(self, mode: str):
         cue = self.get_current_cue()
@@ -3110,7 +3406,7 @@ class MainWindow(QMainWindow):
             cue.pdf_multipage = checked
             win = self.pdf_windows.get(cue.id)
             if win and win.current_cue is cue:
-                win.show_pdf(cue, self.get_screen_by_name(cue.screen_name),
+                win.show_pdf(cue, self.resolve_screen(cue),
                              self.display_defaults, steal_focus=False)
 
     def pdf_prev_page(self):
@@ -3167,7 +3463,7 @@ class MainWindow(QMainWindow):
         if cue.cue_type not in ("Text", "Image", "Video", "PDF", "Link"):
             return
 
-        screen = self.get_screen_by_name(cue.screen_name)
+        screen = self.resolve_screen(cue)
         if checked:
             win = self.get_or_create_window(cue)
             if cue.cue_type == "Text":
@@ -3194,7 +3490,7 @@ class MainWindow(QMainWindow):
         if cue.cue_type == "Link" and cue.link_use_system_browser:
             return
 
-        screen = self.get_screen_by_name(cue.screen_name)
+        screen = self.resolve_screen(cue)
         win = self.get_or_create_window(cue)
 
         if checked:
@@ -3225,7 +3521,7 @@ class MainWindow(QMainWindow):
         if not cue or cue.cue_type not in ("Text", "Image", "Video", "PDF", "Link"):
             return
         win = self.get_or_create_window(cue)
-        screen = self.get_screen_by_name(cue.screen_name)
+        screen = self.resolve_screen(cue)
         win.center_on_screen(screen)
 
     def align_snap(self, edge: str):
@@ -3233,7 +3529,7 @@ class MainWindow(QMainWindow):
         if not cue or cue.cue_type not in ("Text", "Image", "Video", "PDF", "Link"):
             return
         win = self.get_or_create_window(cue)
-        screen = self.get_screen_by_name(cue.screen_name)
+        screen = self.resolve_screen(cue)
         win.snap(edge, screen)
 
        # ------------------------------------------------------------------
@@ -3284,7 +3580,7 @@ class MainWindow(QMainWindow):
             started = True
 
         elif cue.cue_type == "Text":
-            screen = self.get_screen_by_name(cue.screen_name)
+            screen = self.resolve_screen(cue)
             win = self.get_or_create_window(cue)
             win.show_text(cue, screen, self.display_defaults, steal_focus=False)
             started = True
@@ -3304,7 +3600,7 @@ class MainWindow(QMainWindow):
                         and other_id != cue.id
                     ):
                         self.stop_single_cue(other_id)
-            screen = self.get_screen_by_name(cue.screen_name)
+            screen = self.resolve_screen(cue)
             win = self.get_or_create_window(cue)
             win.show_image(cue, screen, self.display_defaults, steal_focus=False)
             started = True
@@ -3315,7 +3611,7 @@ class MainWindow(QMainWindow):
                     f"Video file missing: {cue.video_path or '(none)'}"
                 )
                 return False
-            screen = self.get_screen_by_name(cue.screen_name)
+            screen = self.resolve_screen(cue)
             win = self.get_or_create_window(cue)
             device = self.get_device_by_id(cue.audio_device_id)
             win.show_video(cue, screen, self.display_defaults, device, steal_focus=False)
@@ -3327,7 +3623,7 @@ class MainWindow(QMainWindow):
                     f"PDF file missing: {cue.pdf_path or '(none)'}"
                 )
                 return False
-            screen = self.get_screen_by_name(cue.screen_name)
+            screen = self.resolve_screen(cue)
             win = self.get_or_create_window(cue)
             win.show_pdf(cue, screen, self.display_defaults, steal_focus=False)
             started = True
@@ -3344,7 +3640,7 @@ class MainWindow(QMainWindow):
                 self.statusBar.showMessage(f"Opened in system browser: {url}")
                 started = True
             else:
-                screen = self.get_screen_by_name(cue.screen_name)
+                screen = self.resolve_screen(cue)
                 win = self.get_or_create_window(cue)
                 win.show_url(cue, screen, self.display_defaults, steal_focus=False)
                 started = True
@@ -3936,7 +4232,7 @@ class MainWindow(QMainWindow):
     def toggle_blackout(self, checked: bool):
         if checked:
             cue = self.get_current_cue()
-            screen = self.get_screen_by_name(cue.screen_name) if cue else QGuiApplication.primaryScreen()
+            screen = self.resolve_screen(cue) if cue else QGuiApplication.primaryScreen()
             self.blackout_window.show_on_screen(screen)
             self.statusBar.showMessage("Blackout active")
         else:

@@ -186,6 +186,7 @@ A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 
 - **File → Save** / **Save As** → `.ccs` show file (atomic write — a yanked USB stick will not truncate the previous save)
 - **File → Open Show** loads cues, fade duration, and display defaults. Corrupt cues are skipped with a warning
+- Overlay layouts are **percent of House/Stage/Confidence**, not a laptop's pixel grid. At the venue: **Settings → Map displays…**
 - Media paths are stored as absolute paths in Alpha; keep media in a stable folder or re-link after moving drives
 
 ---
