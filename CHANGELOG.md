@@ -1,5 +1,16 @@
 # Changelog
 
+## Alpha (2026-08-28) — booth show-safety follow-up
+
+### Fixed
+- New **Image** and **Text** cues default to **Infinite (0)** duration so lyrics / slides stay up until the next GO or STOP (the old 5-second default killed persistent overlays mid-service)
+- New overlay cues no longer stamp the laptop's primary monitor name. House / Stage auto-pick and **Settings → Map displays…** can send them to the projector
+- **Video** now connects `LoadedMedia` *before* `setSource` (and plays if already loaded). Retrigger / cached files no longer sit silent
+- Live overlays are **not** draggable unless **Edit Mode** is on — a stray click on the house screen cannot walk a title
+- Save stores same-drive media as **paths relative to the .ccs file**; load resolves relative paths, rewrites the drive letter (`E:` → `F:`), and also looks in `Media\` next to the show. Existing absolute paths still load
+
+---
+
 ## Alpha (2026-08-27) — portable overlay positions
 
 ### New
@@ -91,6 +102,6 @@
 - No full Show Mode lock yet
 - No installer / packaged `.exe` yet
 - Nested groups not supported
-- Media paths still absolute by default
+- Media on another drive than the `.ccs` stays absolute (re-link if that drive letter changes)
 - Launch updater (`VERSION.txt`) not implemented yet
 - Fade & Stop is a delayed hard stop (does not ramp volume)
