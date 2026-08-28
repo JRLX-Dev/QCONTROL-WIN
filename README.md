@@ -40,7 +40,7 @@ Still true:
 - 64-bit Windows 10 or 11 only (prepare the stick on an Intel/AMD PC).
 - Cheap USB flash is fine for the **app**; **video** wants an SSD.
 - First run on a new stick needs internet. After `runtime\` is populated, later PCs can be offline.
-- Show files still store **absolute** media paths. Keep media on the same drive; if GO says a file is missing after the letter changes (`E:` → `F:`), Browse and pick it again.
+- Keep media on the **same drive** as the `.ccs` show (a `Media\` folder next to the show is the easy pattern). New saves store those as relative paths, so the letter can change (`E:` → `F:`). Old shows with absolute paths still load; if GO says a file is missing, Browse once and Save again.
 
 Do **not** launch `Main.py` with a PC-installed Python. Always use the `.bat`.
 
@@ -187,7 +187,9 @@ A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 - **File → Save** / **Save As** → `.ccs` show file (atomic write — a yanked USB stick will not truncate the previous save)
 - **File → Open Show** loads cues, fade duration, and display defaults. Corrupt cues are skipped with a warning
 - Overlay layouts are **percent of House/Stage/Confidence**, not a laptop's pixel grid. At the venue: **Settings → Map displays…**
-- Media paths are stored as absolute paths in Alpha; keep media in a stable folder or re-link after moving drives
+- Media on the same drive as the `.ccs` is saved relative to the show file (drive letter can change). Put files in a `Media\` folder next to the show when you can
+- New Image / Text cues stay up until STOP or the next GO (`Duration` = Infinite). Set a number of seconds only when you want them to self-clear
+- Edit Mode is required to drag an overlay; live GO windows stay put
 
 ---
 
@@ -262,7 +264,7 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 - No full Show Mode (Windows key lock) yet
 - No packaged `.exe` installer yet
 - Nested groups not supported
-- Media paths not yet relative/portable by default
+- Media on a different drive than the `.ccs` is still absolute (re-Browse if that letter changes)
 - Launch updater (GitHub `VERSION.txt`) not implemented yet
 - Fade & Stop is a delayed hard stop (does not ramp volume)
 
