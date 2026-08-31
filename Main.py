@@ -328,6 +328,95 @@ def _atomic_write_json(path, data):
                 pass
 
 
+MEDIA_PATH_ATTRS = ("media_path", "image_path", "video_path", "pdf_path")
+
+
+def _kit_dir():
+    """Folder that travels with the app (USB root or frozen exe dir)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    here = globals().get("__file__") or (sys.argv[0] if sys.argv else ".")
+    return os.path.dirname(os.path.abspath(here))
+
+
+def _portable_relpath(path, anchor):
+    """Store a same-drive file as relative to the show folder so E:→F: still works."""
+    if not path:
+        return path
+    try:
+        abs_p = os.path.abspath(path)
+        if not os.path.isabs(path):
+            return path.replace("\\", "/")
+        roots = []
+        if anchor:
+            roots.append(os.path.abspath(anchor))
+        roots.append(_kit_dir())
+        for root in roots:
+            try:
+                if os.path.splitdrive(abs_p)[0].lower() != os.path.splitdrive(root)[0].lower():
+                    continue
+                rel = os.path.relpath(abs_p, root)
+                return rel.replace("\\", "/")
+            except ValueError:
+                continue
+        return path
+    except Exception:
+        return path
+
+
+def _resolve_media_path(path, anchor):
+    """Open a stored path: as-is, relative to the show, kit folder, or rewritten drive."""
+    path = (path or "").strip()
+    if not path:
+        return path
+    if os.path.isfile(path):
+        return path
+    rel = path.replace("/", os.sep)
+    tries = []
+    if anchor:
+        tries.append(os.path.normpath(os.path.join(os.path.abspath(anchor), rel)))
+    tries.append(os.path.normpath(os.path.join(_kit_dir(), rel)))
+    if os.path.isabs(path):
+        rest = os.path.splitdrive(path)[1]
+        if anchor:
+            adrive = os.path.splitdrive(os.path.abspath(anchor))[0]
+            if adrive and rest:
+                tries.append(os.path.normpath(adrive + rest))
+        kdrive = os.path.splitdrive(_kit_dir())[0]
+        if kdrive and rest:
+            tries.append(os.path.normpath(kdrive + rest))
+        base = os.path.basename(path)
+        if anchor:
+            show_dir = os.path.abspath(anchor)
+            tries.append(os.path.join(show_dir, "Media", base))
+            tries.append(os.path.join(os.path.dirname(show_dir), "Media", base))
+        tries.append(os.path.join(_kit_dir(), "Media", base))
+    seen = set()
+    for candidate in tries:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+    return path
+
+
+def rewrite_cue_dict_paths(d, anchor):
+    out = dict(d)
+    for key in MEDIA_PATH_ATTRS:
+        val = out.get(key) or ""
+        if val:
+            out[key] = _portable_relpath(val, anchor)
+    return out
+
+
+def resolve_cue_media_paths(cue, anchor):
+    for key in MEDIA_PATH_ATTRS:
+        val = getattr(cue, key, "") or ""
+        if val:
+            setattr(cue, key, _resolve_media_path(val, anchor))
+
+
 def cue_to_dict(cue):
     """Serialize one Cue to a JSON-safe dict."""
     return {
@@ -452,6 +541,8 @@ class CueRowWidget(QWidget):
         self.cue_id = cue.id
         self._indent = indent
         self.setFixedHeight(row_h)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setStyleSheet("background: transparent;")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8 + indent * 28, 4, 8, 4)
@@ -603,13 +694,15 @@ class OverlayWindow(QWidget):
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        if self.edit_mode:
-            edge = self._hit_edge(event.position().toPoint())
-            if edge:
-                self._resize_edge = edge
-                self._drag_pos = event.globalPosition().toPoint()
-                event.accept()
-                return
+        if not self.edit_mode:
+            event.ignore()
+            return
+        edge = self._hit_edge(event.position().toPoint())
+        if edge:
+            self._resize_edge = edge
+            self._drag_pos = event.globalPosition().toPoint()
+            event.accept()
+            return
         self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
         self._resize_edge = None
         event.accept()
@@ -644,7 +737,7 @@ class OverlayWindow(QWidget):
             event.accept()
             return
 
-        if self._drag_pos is not None and self._resize_edge is None:
+        if self.edit_mode and self._drag_pos is not None and self._resize_edge is None:
             self.move(global_pos - self._drag_pos)
             if self.current_cue:
                 self.current_cue.user_moved = True
@@ -948,7 +1041,6 @@ class VideoDisplayWindow(OverlayWindow):
         self.audio_output.setVolume(0.0 if cue.video_muted else cue.volume)
         self.audio_output.setMuted(cue.video_muted)
 
-        self.player.setSource(QUrl.fromLocalFile(cue.video_path))
         self.player.setLoops(QMediaPlayer.Loops.Infinite if cue.video_loop else 1)
 
         self.set_opacity(cue.opacity)
@@ -970,7 +1062,12 @@ class VideoDisplayWindow(OverlayWindow):
             self.player.mediaStatusChanged.disconnect()
         except Exception:
             pass
+        # Connect before setSource. If the file is already loaded, play now —
+        # otherwise the LoadedMedia signal already fired and GO is silent.
         self.player.mediaStatusChanged.connect(on_status)
+        self.player.setSource(QUrl.fromLocalFile(cue.video_path))
+        if self.player.mediaStatus() == QMediaPlayer.MediaStatus.LoadedMedia:
+            self.player.play()
 
     def stop_video(self):
         self.player.stop()
@@ -1735,9 +1832,6 @@ class MainWindow(QMainWindow):
             elif ext in (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"):
                 cue = Cue(next_num, name, "Video", "Auto-Ready")
                 cue.video_path = path
-                primary = QGuiApplication.primaryScreen()
-                if primary:
-                    cue.screen_name = primary.name()
                 self.cues.append(cue)
                 last_id = cue.id
                 created += 1
@@ -1745,10 +1839,7 @@ class MainWindow(QMainWindow):
             elif ext in (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"):
                 cue = Cue(next_num, name, "Image", "Auto-Ready")
                 cue.image_path = path
-                cue.duration_ms = 5000
-                primary = QGuiApplication.primaryScreen()
-                if primary:
-                    cue.screen_name = primary.name()
+                cue.duration_ms = 0
                 self.cues.append(cue)
                 last_id = cue.id
                 created += 1
@@ -1759,9 +1850,6 @@ class MainWindow(QMainWindow):
                     continue
                 cue = Cue(next_num, name, "PDF", "Auto-Ready")
                 cue.pdf_path = path
-                primary = QGuiApplication.primaryScreen()
-                if primary:
-                    cue.screen_name = primary.name()
                 self.cues.append(cue)
                 last_id = cue.id
                 created += 1
@@ -1878,7 +1966,10 @@ class MainWindow(QMainWindow):
                     for kk, v in d.items() if isinstance(v, QRect)}
                 for k, d in self.display_defaults.items()
             },
-            "cues": [cue_to_dict(c) for c in self.cues]
+            "cues": [
+                rewrite_cue_dict_paths(cue_to_dict(c), os.path.dirname(os.path.abspath(path)))
+                for c in self.cues
+            ]
         }
 
         try:
@@ -1918,7 +2009,9 @@ class MainWindow(QMainWindow):
                 if not isinstance(cdata, dict):
                     skipped += 1
                     continue
-                self.cues.append(cue_from_dict(cdata))
+                cue = cue_from_dict(cdata)
+                resolve_cue_media_paths(cue, os.path.dirname(os.path.abspath(path)))
+                self.cues.append(cue)
             except Exception as e:
                 skipped += 1
                 name = cdata.get("name", "?") if isinstance(cdata, dict) else "?"
@@ -2103,6 +2196,14 @@ class MainWindow(QMainWindow):
         split = QHBoxLayout()
 
         self.cue_list = QListWidget()
+        # Windows paints QListWidgetItem text under setItemWidget rows.
+        # Keep item text empty; Narrator reads CueRowWidget.accessibleName.
+        self.cue_list.setStyleSheet("""
+            QListWidget { background-color: #2b2b2b; color: #ddd; border: none; }
+            QListWidget::item { color: transparent; padding: 0px; margin: 0px; }
+            QListWidget::item:selected { background-color: #3d3a1f; }
+            QListWidget::item:hover { background-color: #333; }
+        """)
         self.cue_list.setAccessibleName("Cue list")
         self.cue_list.setAccessibleDescription(
             "Standby cue is selected. Space or GO fires it. Status is spoken as STANDBY or RUNNING."
@@ -2755,8 +2856,10 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem()
             item.setData(Qt.ItemDataRole.UserRole, cue.id)
             item.setData(Qt.ItemDataRole.UserRole + 1, indent)
-            item.setText(text)  # Narrator / UIA; hidden once the widget is attached
+            # Empty on purpose: Windows draws item text AND the row widget.
+            item.setText("")
             item.setToolTip(text)
+            item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
             item.setSizeHint(QSize(0, row_h))
             self.cue_list.addItem(item)
 
@@ -2787,9 +2890,9 @@ class MainWindow(QMainWindow):
             indent = item.data(Qt.ItemDataRole.UserRole + 1) or 0
             status = self.cue_status(cue)
             text = format_cue_row_text(cue, indent=indent, status=status)
-            if item.text() != text:
-                item.setText(text)
+            if item.toolTip() != text:
                 item.setToolTip(text)
+                item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
             row = self.cue_list.itemWidget(item)
             if row is not None:
                 row.apply_status(text, status)
@@ -4068,9 +4171,6 @@ class MainWindow(QMainWindow):
             next_num = max((c.number for c in self.cues), default=0) + 1
             cue = Cue(next_num, name, "Video", "Auto-Ready")
             cue.video_path = path
-            primary = QGuiApplication.primaryScreen()
-            if primary:
-                cue.screen_name = primary.name()
             self._add_and_select(cue)
 
     def add_image_cue(self):
@@ -4086,10 +4186,7 @@ class MainWindow(QMainWindow):
         next_num = max((c.number for c in self.cues), default=0) + 1
         cue = Cue(next_num, name, "Image", "Auto-Ready")
         cue.image_path = path
-        cue.duration_ms = 5000
-        primary = QGuiApplication.primaryScreen()
-        if primary:
-            cue.screen_name = primary.name()
+        cue.duration_ms = 0
         self._add_and_select(cue)
 
     def add_pdf_cue(self):
@@ -4105,9 +4202,6 @@ class MainWindow(QMainWindow):
             next_num = max((c.number for c in self.cues), default=0) + 1
             cue = Cue(next_num, name, "PDF", "Auto-Ready")
             cue.pdf_path = path
-            primary = QGuiApplication.primaryScreen()
-            if primary:
-                cue.screen_name = primary.name()
             self._add_and_select(cue)
 
     def add_link_cue(self):
@@ -4115,19 +4209,13 @@ class MainWindow(QMainWindow):
         cue = Cue(next_num, "New Link", "Link", "Auto-Ready")
         cue.link_url = "https://"
         cue.link_use_system_browser = False
-        primary = QGuiApplication.primaryScreen()
-        if primary:
-            cue.screen_name = primary.name()
         self._add_and_select(cue)
 
     def add_text_cue(self):
         next_num = max((c.number for c in self.cues), default=0) + 1
         cue = Cue(next_num, "New Supertitle", "Text", "Auto-Ready")
         cue.text = "Hello from the booth"
-        cue.duration_ms = 5000
-        primary = QGuiApplication.primaryScreen()
-        if primary:
-            cue.screen_name = primary.name()
+        cue.duration_ms = 0
         self._add_and_select(cue)
 
     def add_osc_cue(self):
