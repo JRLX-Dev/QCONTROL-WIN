@@ -1,0 +1,50 @@
+--- a/Main.py
++++ b/Main.py
+@@ -452,6 +452,8 @@
+         self.cue_id = cue.id
+         self._indent = indent
+         self.setFixedHeight(row_h)
++        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
++        self.setStyleSheet("background: transparent;")
+ 
+         layout = QHBoxLayout(self)
+         layout.setContentsMargins(8 + indent * 28, 4, 8, 4)
+@@ -2103,6 +2105,14 @@
+         split = QHBoxLayout()
+ 
+         self.cue_list = QListWidget()
++        # Windows paints QListWidgetItem text under setItemWidget rows.
++        # Keep item text empty; Narrator reads CueRowWidget.accessibleName.
++        self.cue_list.setStyleSheet("""
++            QListWidget { background-color: #2b2b2b; color: #ddd; border: none; }
++            QListWidget::item { color: transparent; padding: 0px; margin: 0px; }
++            QListWidget::item:selected { background-color: #3d3a1f; }
++            QListWidget::item:hover { background-color: #333; }
++        """)
+         self.cue_list.setAccessibleName("Cue list")
+         self.cue_list.setAccessibleDescription(
+             "Standby cue is selected. Space or GO fires it. Status is spoken as STANDBY or RUNNING."
+@@ -2755,8 +2765,10 @@
+             item = QListWidgetItem()
+             item.setData(Qt.ItemDataRole.UserRole, cue.id)
+             item.setData(Qt.ItemDataRole.UserRole + 1, indent)
+-            item.setText(text)  # Narrator / UIA; hidden once the widget is attached
++            # Empty on purpose: Windows draws item text AND the row widget.
++            item.setText("")
+             item.setToolTip(text)
++            item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
+             item.setSizeHint(QSize(0, row_h))
+             self.cue_list.addItem(item)
+ 
+@@ -2787,9 +2799,9 @@
+             indent = item.data(Qt.ItemDataRole.UserRole + 1) or 0
+             status = self.cue_status(cue)
+             text = format_cue_row_text(cue, indent=indent, status=status)
+-            if item.text() != text:
+-                item.setText(text)
++            if item.toolTip() != text:
+                 item.setToolTip(text)
++                item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
+             row = self.cue_list.itemWidget(item)
+             if row is not None:
+                 row.apply_status(text, status)

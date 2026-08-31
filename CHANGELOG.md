@@ -1,5 +1,13 @@
 # Changelog
 
+## Alpha (2026-08-31) — cue-list double-paint
+
+### Fixed
+- Cue list no longer draws the row caption twice on Windows (QListWidgetItem text + CueRowWidget overlapping into unreadable garbage)
+- Item caption is left empty; Narrator still reads STANDBY / RUNNING from the row widget accessible name
+
+---
+
 ## Alpha (2026-08-28) — booth show-safety follow-up
 
 ### Fixed
@@ -7,7 +15,7 @@
 - New overlay cues no longer stamp the laptop's primary monitor name. House / Stage auto-pick and **Settings → Map displays…** can send them to the projector
 - **Video** now connects `LoadedMedia` *before* `setSource` (and plays if already loaded). Retrigger / cached files no longer sit silent
 - Live overlays are **not** draggable unless **Edit Mode** is on — a stray click on the house screen cannot walk a title
-- Save stores same-drive media as **paths relative to the .ccs file**; load resolves relative paths, rewrites the drive letter (`E:` → `F:`), and also looks in `Media\` next to the show. Existing absolute paths still load
+- Save stores same-drive media as **paths relative to the .ccs file**; load resolves relative paths, rewrites the drive letter (`E:` → `F:`), and also looks in `Media\\` next to the show. Existing absolute paths still load
 
 ---
 
