@@ -1,10 +1,16 @@
 # Changelog
 
-## Alpha (2026-08-31) — cue-list double-paint
+## Alpha (2026-08-31) — public tree cleanup
 
 ### Fixed
-- Cue list no longer draws the row caption twice on Windows (QListWidgetItem text + CueRowWidget overlapping into unreadable garbage)
-- Item caption is left empty; Narrator still reads STANDBY / RUNNING from the row widget accessible name
+- Cue list no longer draws the row caption twice on Windows (item text + row widget)
+- New Image / Text cues default to Infinite duration; live overlays are not draggable unless Edit Mode is on
+- Video connects LoadedMedia before setSource so retrigger / cached files play
+- Same-drive media saves as paths relative to the `.ccs` file
+- `Install Python.bat` now bootstraps pip when `runtime\python\python.exe` exists but pip does not (embeddable zip)
+
+### Repo
+- Both fixes live in `Main.py`. Temporary `.patch` files removed from the public tree
 
 ---
 

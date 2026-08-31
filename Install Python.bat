@@ -28,6 +28,11 @@ echo.
 call :check_exe "%PY_DIR%\python.exe"
 if not errorlevel 1 (
     echo Using bundled runtime\python\  ^(travels with this folder^)
+    "%PY_DIR%\python.exe" -m pip --version >nul 2>&1
+    if errorlevel 1 (
+        echo Bundled Python has no pip. Bootstrapping...
+        goto NEED_PIP
+    )
     exit /b 0
 )
 
@@ -85,23 +90,22 @@ if errorlevel 1 (
     echo Format the USB/SSD as NTFS and try again.
     exit /b 1
 )
+
+:NEED_PIP
+mkdir "%CACHE%" 2>nul
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$p = Get-ChildItem -LiteralPath '%PY_DIR%' -Filter '*.pth' | Select-Object -First 1; if (-not $p) { exit 1 }; $t = Get-Content -LiteralPath $p.FullName -Raw; $t = $t -replace '#import site','import site'; if ($t -notmatch 'site-packages') { $t = \"Lib\\site-packages`r`n\" + $t }; Set-Content -LiteralPath $p.FullName -Value $t -NoNewline"
-if errorlevel 1 (
-    echo ERROR: Could not enable pip on the embeddable Python.
-    exit /b 1
-)
+  "$p = Get-ChildItem -LiteralPath '%PY_DIR%' -Filter '*.pth' | Select-Object -First 1; if (-not $p) { exit 0 }; $t = Get-Content -LiteralPath $p.FullName -Raw; $t = $t -replace '#import site','import site'; if ($t -notmatch 'site-packages') { $t = \"Lib\\site-packages`r`n\" + $t }; Set-Content -LiteralPath $p.FullName -Value $t -NoNewline"
 echo Getting pip...
 call :download "https://bootstrap.pypa.io/get-pip.py" "%CACHE%\get-pip.py"
 if errorlevel 1 exit /b 1
 "%PY_DIR%\python.exe" "%CACHE%\get-pip.py" --no-warn-script-location
 if errorlevel 1 (
-    echo ERROR: get-pip failed.
+    echo ERROR: get-pip failed. First run needs internet to bootstrap.pypa.io.
     exit /b 1
 )
 call :check_exe "%PY_DIR%\python.exe"
 if errorlevel 1 exit /b 1
-echo Bundled embeddable Python is ready.
+echo Bundled Python is ready.
 exit /b 0
 
 :download
