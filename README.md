@@ -17,8 +17,8 @@ You do **not** need to install Python on the PC.
 
 1. On GitHub: **Code → Download ZIP**. Extract the folder to a fast drive.
 2. Double-click **`Run CueControl.bat`**.
-   - First run downloads official **[python.org](https://www.python.org/downloads/)** 64-bit Python **into this folder** (`runtime\`) — no admin, not Program Files — then installs packages. Needs internet.
-   - Later runs just start the app.
+   - First run downloads official **[python.org](https://www.python.org/downloads/)** 64-bit Python **into this folder** (`runtime\\`) — no admin, not Program Files — then installs packages. Needs internet.
+   - Later runs check GitHub for a newer `Main.py`, then start the app.
 
 Microsoft Store Python is ignored on purpose.
 
@@ -28,7 +28,7 @@ If the window flashes and closes, run the `.bat` from a Command Prompt so you ca
 
 ## Flash drive / SSD (move between PCs)
 
-Python lives **in the CueControl folder**, not on the host PC. After one successful first run, copy the **whole folder** (including `runtime\`) onto the stick.
+Python lives **in the CueControl folder**, not on the host PC. After one successful first run, copy the **whole folder** (including `runtime\\`) onto the stick.
 
 1. Format the drive **NTFS** (factory FAT32 often breaks the Python installer).
 2. Copy the CueControl folder onto it.
@@ -39,8 +39,8 @@ Still true:
 
 - 64-bit Windows 10 or 11 only (prepare the stick on an Intel/AMD PC).
 - Cheap USB flash is fine for the **app**; **video** wants an SSD.
-- First run on a new stick needs internet. After `runtime\` is populated, later PCs can be offline.
-- Keep media on the **same drive** as the `.ccs` show (a `Media\` folder next to the show is the easy pattern). New saves store those as relative paths, so the letter can change (`E:` → `F:`). Old shows with absolute paths still load; if GO says a file is missing, Browse once and Save again.
+- First run on a new stick needs internet. After `runtime\\` is populated, later PCs can be offline.
+- Keep media on the **same drive** as the `.ccs` show (a `Media\\` folder next to the show is the easy pattern). New saves store those as relative paths, so the letter can change (`E:` → `F:`). Old shows with absolute paths still load; if GO says a file is missing, Browse once and Save again.
 
 Do **not** launch `Main.py` with a PC-installed Python. Always use the `.bat`.
 
@@ -64,8 +64,8 @@ Do **not** launch `Main.py` with a PC-installed Python. Always use the `.bat`.
 ## Requirements
 
 - Windows 10 or 11 (64-bit)
-- Internet on **first** run (to fetch Python + PySide6 into `runtime\`)
-- After that: this folder only (`runtime\` travels with the drive)
+- Internet on **first** run (to fetch Python + PySide6 into `runtime\\`)
+- After that: this folder only (`runtime\\` travels with the drive)
 
 Optional (feature-dependent):
 - QtPdf support in your PySide6 install → PDF cues (including multipage)
@@ -87,7 +87,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
 pip install -r requirements.txt
 ```
 
-A `.venv` does **not** travel with a flash drive. Use the `.bat` + `runtime\` for that.
+A `.venv` does **not** travel with a flash drive. Use the `.bat` + `runtime\\` for that.
 
 ---
 
@@ -187,7 +187,7 @@ A new Audio or Video GO cuts the previous same-type bed (one bed at a time).
 - **File → Save** / **Save As** → `.ccs` show file (atomic write — a yanked USB stick will not truncate the previous save)
 - **File → Open Show** loads cues, fade duration, and display defaults. Corrupt cues are skipped with a warning
 - Overlay layouts are **percent of House/Stage/Confidence**, not a laptop's pixel grid. At the venue: **Settings → Map displays…**
-- Media on the same drive as the `.ccs` is saved relative to the show file (drive letter can change). Put files in a `Media\` folder next to the show when you can
+- Media on the same drive as the `.ccs` is saved relative to the show file (drive letter can change). Put files in a `Media\\` folder next to the show when you can
 - New Image / Text cues stay up until STOP or the next GO (`Duration` = Infinite). Set a number of seconds only when you want them to self-clear
 - Edit Mode is required to drag an overlay; live GO windows stay put
 
@@ -221,23 +221,25 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 
 | Tier | Device | What’s on it | Who |
 |------|--------|--------------|-----|
-| GitHub ZIP | Their PC | Source + `Run CueControl.bat` | Testers; first run fetches Python into `runtime\` |
-| Software-only | USB flash (NTFS) | App + `runtime\` + `.bat` | First-look testers; media stays on the house PC |
-| Basic kit | 250 GB NVMe in USB-C enclosure | App + `runtime\` + sample 1080p + `Shows\` | Batch-cloned via Sabrent dock |
+| GitHub ZIP | Their PC | Source + `Run CueControl.bat` | Testers; first run fetches Python into `runtime\\` |
+| Software-only | USB flash (NTFS) | App + `runtime\\` + `.bat` | First-look testers; media stays on the house PC |
+| Basic kit | 250 GB NVMe in USB-C enclosure | App + `runtime\\` + sample 1080p + `Shows\\` | Batch-cloned via Sabrent dock |
 | Super-test kit | USB-C SSD | Full stack + their media | Multi-display, groups, OSC, real dry runs |
 
 **Clone process (basic kits)**
 
-1. Build one master NVMe (NTFS): `CueControl\` with `Main.py`, `runtime\`, `Run CueControl.bat`, `Media\`, `Shows\`.
+1. Build one master NVMe (NTFS): `CueControl\\` with `Main.py`, `runtime\\`, `Run CueControl.bat`, `Media\\`, `Shows\\`.
 2. Smoke-test from that drive.
 3. Offline-clone to same-size or larger 250 GB targets.
 4. Spot-check one drive per batch.
 
-**Future — launch updater (not built yet)**
+**Launch updater (this build)**
 
-- `Run CueControl.bat` will compare local `VERSION.txt` to GitHub `main`.
-- If newer, download **only** `Main.py` (and `VERSION.txt`), then start.
-- Offline / GitHub fail → start local copy. Never auto-update `runtime\`.
+- Double-click `Run CueControl.bat`. It compares local `VERSION.txt` to GitHub `main`.
+- If GitHub is newer, it downloads **only** `Main.py` (and writes `VERSION.txt`) after the file parses.
+- Offline / GitHub fail → start the local copy. `runtime\\` is never auto-updated.
+- Packages install when `requirements.txt` changes, not on every launch.
+- Booth / skip check: `set CC_SKIP_UPDATE=1` then run the `.bat`.
 
 ---
 
@@ -246,9 +248,9 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 | Symptom | What to try |
 |---------|-------------|
 | `No module named numpy` | You launched `Main.py` with the wrong Python. Use `Run CueControl.bat` |
-| `python` / `py` not found | Ignore it — double-click `Run CueControl.bat`; Python is bundled into `runtime\` |
+| `python` / `py` not found | Ignore it — double-click `Run CueControl.bat`; Python is bundled into `runtime\\` |
 | Installer / download failed | Internet to python.org; format the stick **NTFS**; retry `Install Python.bat` |
-| Works on PC A, not PC B | Copy the **whole** folder including `runtime\`. Stick must be NTFS. 64-bit Windows 10/11. |
+| Works on PC A, not PC B | Copy the **whole** folder including `runtime\\`. Stick must be NTFS. 64-bit Windows 10/11. |
 | Execution policy error | `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned` |
 | No sound | Check Global Default Audio Device; confirm file path exists |
 | Overlay on wrong screen | Select Display in Properties; re-enable Test/Edit after changing |
@@ -265,7 +267,7 @@ Report failures with: **steps**, **expected vs actual**, and **full traceback** 
 - No packaged `.exe` installer yet
 - Nested groups not supported
 - Media on a different drive than the `.ccs` is still absolute (re-Browse if that letter changes)
-- Launch updater (GitHub `VERSION.txt`) not implemented yet
+- Launch updater does not update `runtime\\` (wipe `runtime` only if Python/`pip` is broken)
 - Fade & Stop is a delayed hard stop (does not ramp volume)
 
 ---
