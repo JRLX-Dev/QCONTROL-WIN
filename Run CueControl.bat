@@ -15,7 +15,6 @@ if not exist "Main.py" (
     exit /b 1
 )
 
-REM Python lives in runtime\ on this drive — not the host PC, not .venv.
 if exist "Install Python.bat" (
     call "%~dp0Install Python.bat"
     if errorlevel 1 (
@@ -33,17 +32,21 @@ if not exist "%APP_PY%" (
     exit /b 1
 )
 
-echo Installing / updating packages (first run can take a few minutes^)...
-"%APP_PY%" -m pip install --upgrade pip
-if exist "requirements.txt" (
-    "%APP_PY%" -m pip install -r requirements.txt
+if exist "update_cuecontrol.py" (
+    "%APP_PY%" "update_cuecontrol.py"
+    if errorlevel 1 (
+        echo ERROR: Could not prepare CueControl.
+        pause
+        exit /b 1
+    )
 ) else (
-    "%APP_PY%" -m pip install "PySide6>=6.6" numpy soundfile python-osc
-)
-if errorlevel 1 (
-    echo ERROR: pip install failed. First run needs internet.
-    pause
-    exit /b 1
+    echo Installing / updating packages...
+    "%APP_PY%" -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo ERROR: pip install failed. First run needs internet.
+        pause
+        exit /b 1
+    )
 )
 
 echo.
