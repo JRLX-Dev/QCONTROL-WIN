@@ -1,0 +1,216 @@
+diff --git a/Main.py b/Main.py
+--- a/Main.py
++++ b/Main.py
+@@ -1,6 +1,6 @@
+ from PySide6.QtGui import (
+     QColor, QAction, QActionGroup, QFont, QPainter, QPen, QGuiApplication,
+-    QMouseEvent, QPixmap, QKeySequence, QShortcut
++    QMouseEvent, QPixmap, QKeySequence, QShortcut, QIcon
+ )
+@@
+         super().__init__()
+         self.setWindowTitle("CueControl Windows")
++        self._apply_window_icon()
+         self.setGeometry(80, 60, 1550, 920)
+@@
+         self.fade_duration_ms = 2000
++        self._fade_timer = None
++        self._fade_bases = {}
++        self.show_mode = False
++        self._allow_close = False
++        self._kb_hook = None
++        self._kb_proc = None
+         self.current_show_path = None
+@@
+             act.triggered.connect(lambda checked, p=pct: checked and self.apply_ui_scale(p))
+ 
++        view_menu.addSeparator()
++        self.show_mode_act = QAction("Show Mode", self)
++        self.show_mode_act.setCheckable(True)
++        self.show_mode_act.setAccessibleName("Show Mode")
++        self.show_mode_act.setToolTip("Lock the booth: hide taskbar, block Windows key, ignore accidental close")
++        self.show_mode_act.triggered.connect(self.set_show_mode)
++        view_menu.addAction(self.show_mode_act)
++
+         help_menu = menubar.addMenu("Help")
+@@
+     def fade_and_stop(self):
+         if getattr(self, "_fade_pending", False):
+             return
+         self._fade_pending = True
+-        self.statusBar.showMessage(f"Fading {self.fade_duration_ms//1000}s...")
++        ms = max(200, int(self.fade_duration_ms or 2000))
++        self._fade_bases = {}
++        for cid, info in list(self.active_cues.items()):
++            cue = info.get("cue")
++            if cue is None:
++                continue
++            base = float(getattr(cue, "volume", 1.0) or 0.0)
++            if cue.cue_type == "Video" and getattr(cue, "video_muted", False):
++                base = 0.0
++            self._fade_bases[cid] = base
++        self._fade_started = time.time()
++        self._fade_ms = ms
++        if self._fade_timer is None:
++            self._fade_timer = QTimer(self)
++            self._fade_timer.timeout.connect(self._tick_fade)
++        self._fade_timer.start(40)
++        self.statusBar.showMessage(f"Fading {ms // 1000}s...")
++        self._tick_fade()
++
++    def _set_live_volume(self, cue, level):
++        level = max(0.0, min(1.0, float(level)))
++        if cue.cue_type == "Audio":
++            info = self.active_cues.get(cue.id) or {}
++            output = info.get("output")
++            if output is not None:
++                output.setVolume(level)
++        elif cue.cue_type == "Video":
++            win = self.video_windows.get(cue.id)
++            if win is not None and hasattr(win, "audio_output") and win.audio_output is not None:
++                if not getattr(cue, "video_muted", False):
++                    win.audio_output.setVolume(level)
++
++    def _tick_fade(self):
++        elapsed = (time.time() - getattr(self, "_fade_started", time.time())) * 1000.0
++        ms = max(1, int(getattr(self, "_fade_ms", 2000)))
++        t = min(1.0, elapsed / ms)
++        for cid, base in list(getattr(self, "_fade_bases", {}).items()):
++            info = self.active_cues.get(cid)
++            if not info:
++                continue
++            self._set_live_volume(info["cue"], base * (1.0 - t))
++        if t >= 1.0:
++            if self._fade_timer is not None:
++                self._fade_timer.stop()
++            self._fade_pending = False
++            self._fade_bases = {}
++            self.stop_all()
+ 
+-        def _finish_fade():
+-            self._fade_pending = False
+-            self.stop_all()
+-
+-        QTimer.singleShot(self.fade_duration_ms, _finish_fade)
+-
+     def stop_all(self):
+@@
+     def closeEvent(self, event):
+         """Stop all playback so media cannot outlive the window."""
++        if getattr(self, "show_mode", False) and not getattr(self, "_allow_close", False):
++            self.statusBar.showMessage("Show Mode is on. View → Show Mode to exit, then close.")
++            event.ignore()
++            return
++        self._set_show_mode_os(False)
+         self.stop_all()
+         event.accept()
++
++    def _apply_window_icon(self):
++        """Title-bar / taskbar mark. Missing file is a no-op."""
++        root = _kit_dir()
++        for name in ("logo.ico", "logo.png", os.path.join("assets", "logo.ico"),
++                     os.path.join("assets", "logo.png"),
++                     os.path.join("exe", "assets", "logo.png"),
++                     os.path.join("exe", "assets", "logo.ico")):
++            path = os.path.join(root, name)
++            if os.path.isfile(path):
++                icon = QIcon(path)
++                if not icon.isNull():
++                    app = QApplication.instance()
++                    if app is not None:
++                        app.setWindowIcon(icon)
++                    self.setWindowIcon(icon)
++                return
++
++    def set_show_mode(self, on):
++        self.show_mode = bool(on)
++        self._set_show_mode_os(self.show_mode)
++        if self.show_mode:
++            self.statusBar.showMessage("Show Mode on. View → Show Mode to unlock.")
++        else:
++            self.statusBar.showMessage("Show Mode off")
++
++    def _set_show_mode_os(self, on):
++        if os.name != "nt":
++            return
++        try:
++            import ctypes
++            from ctypes import wintypes
++            user32 = ctypes.windll.user32
++            for cls in ("Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
++                hwnd = user32.FindWindowW(cls, None)
++                if hwnd:
++                    user32.ShowWindow(hwnd, 0 if on else 5)
++            if on and self._kb_hook is None:
++                WH_KEYBOARD_LL = 13
++                WM_KEYDOWN = 0x0100
++                WM_SYSKEYDOWN = 0x0104
++
++                class KBDLLHOOKSTRUCT(ctypes.Structure):
++                    _fields_ = [
++                        ("vkCode", wintypes.DWORD),
++                        ("scanCode", wintypes.DWORD),
++                        ("flags", wintypes.DWORD),
++                        ("time", wintypes.DWORD),
++                        ("dwExtraInfo", ctypes.c_void_p),
++                    ]
++
++                HOOKPROC = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
++
++                def _proc(nCode, wParam, lParam):
++                    if nCode >= 0 and wParam in (WM_KEYDOWN, WM_SYSKEYDOWN):
++                        kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
++                        if kb.vkCode in (0x5B, 0x5C):
++                            return 1
++                    return user32.CallNextHookEx(self._kb_hook, nCode, wParam, lParam)
++
++                self._kb_proc = HOOKPROC(_proc)
++                self._kb_hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._kb_proc, None, 0)
++            elif not on and self._kb_hook:
++                user32.UnhookWindowsHookEx(self._kb_hook)
++                self._kb_hook = None
++                self._kb_proc = None
++        except Exception:
++            pass
++
++    def _group_contains_group(self, group_cue):
++        for cid in getattr(group_cue, "group_children", []) or []:
++            child = self.get_cue_by_id(cid)
++            if child and (child.cue_type == "Group" or child.is_group):
++                return True
++        return False
++
++    def _group_would_cycle(self, child_cue, group_cue):
++        seen = set()
++        cur = group_cue
++        while cur is not None and cur.id not in seen:
++            if cur.id == child_cue.id:
++                return True
++            seen.add(cur.id)
++            cur = self.get_cue_by_id(cur.parent_id) if cur.parent_id else None
++        return False
+@@
+     def add_cue_to_group(self, child_cue, group_cue):
+         if child_cue.id == group_cue.id:
+             return
+         if child_cue.cue_type == "Group" or child_cue.is_group:
+-            self.statusBar.showMessage("Nesting groups is not supported in this version")
+-            return
++            if group_cue.parent_id:
++                self.statusBar.showMessage("Only one level of nested groups")
++                return
++            if self._group_contains_group(child_cue):
++                self.statusBar.showMessage("That group already contains a group")
++                return
++            if self._group_would_cycle(child_cue, group_cue):
++                self.statusBar.showMessage("That would make a group loop")
++                return
+@@
+             children.sort(key=lambda c: c.number)
+             for child in children:
+-                add_row(child, indent=1)
++                add_row(child, indent=indent + 1)
+@@
+     prefix = "↳  " if indent > 0 else ""
++    if indent > 1:
++        prefix = ("  " * (indent - 1)) + "↳  "
