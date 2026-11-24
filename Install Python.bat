@@ -25,6 +25,14 @@ echo  CueControl — bundled Python
 echo  Folder: %cd%
 echo.
 
+echo %cd% | find " " >nul
+if not errorlevel 1 (
+    echo WARNING: this folder path contains a space.
+    echo The quiet Python installer often fails on spaces.
+    echo Prefer a path like D:\CueControl\
+    echo.
+)
+
 call :check_exe "%PY_DIR%\python.exe"
 if not errorlevel 1 (
     echo Using bundled runtime\python\  ^(travels with this folder^)
@@ -44,6 +52,7 @@ echo.
 
 mkdir "%CACHE%" 2>nul
 set "INSTALLER=%CACHE%\%INSTALLER_EXE%"
+if exist "%INSTALLER%" call :reject_empty "%INSTALLER%"
 if not exist "%INSTALLER%" (
     call :download "%INSTALLER_URL%" "%INSTALLER%"
     if errorlevel 1 (
@@ -66,6 +75,11 @@ if errorlevel 1 (
     echo Installer finished but python.exe is missing. Trying embeddable package...
     goto EMBED
 )
+"%PY_DIR%\python.exe" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo Official Python has no pip. Bootstrapping...
+    goto NEED_PIP
+)
 echo Bundled Python is ready.
 exit /b 0
 
@@ -73,6 +87,7 @@ exit /b 0
 echo.
 echo Downloading python.org embeddable package...
 set "ZIP=%CACHE%\%EMBED_ZIP%"
+if exist "%ZIP%" call :reject_empty "%ZIP%"
 if not exist "%ZIP%" (
     call :download "%EMBED_URL%" "%ZIP%"
     if errorlevel 1 (
@@ -96,15 +111,25 @@ mkdir "%CACHE%" 2>nul
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "$p = Get-ChildItem -LiteralPath '%PY_DIR%' -Filter '*.pth' | Select-Object -First 1; if (-not $p) { exit 0 }; $t = Get-Content -LiteralPath $p.FullName -Raw; $t = $t -replace '#import site','import site'; if ($t -notmatch 'site-packages') { $t = \"Lib\\site-packages`r`n\" + $t }; Set-Content -LiteralPath $p.FullName -Value $t -NoNewline"
 echo Getting pip...
-call :download "https://bootstrap.pypa.io/get-pip.py" "%CACHE%\get-pip.py"
-if errorlevel 1 exit /b 1
-"%PY_DIR%\python.exe" "%CACHE%\get-pip.py" --no-warn-script-location
+set "GETPIP=%CACHE%\get-pip.py"
+if exist "%GETPIP%" call :reject_empty "%GETPIP%"
+call :download "https://bootstrap.pypa.io/get-pip.py" "%GETPIP%"
+if errorlevel 1 (
+    echo ERROR: Could not download get-pip.py. First run needs internet to bootstrap.pypa.io.
+    exit /b 1
+)
+"%PY_DIR%\python.exe" "%GETPIP%" --no-warn-script-location
 if errorlevel 1 (
     echo ERROR: get-pip failed. First run needs internet to bootstrap.pypa.io.
     exit /b 1
 )
 call :check_exe "%PY_DIR%\python.exe"
 if errorlevel 1 exit /b 1
+"%PY_DIR%\python.exe" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: pip still missing after bootstrap.
+    exit /b 1
+)
 echo Bundled Python is ready.
 exit /b 0
 
@@ -121,8 +146,19 @@ if not errorlevel 1 (
 )
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
   "Invoke-WebRequest -Uri '%URL%' -OutFile '%OUT%' -UseBasicParsing"
-if exist "%OUT%" exit /b 0
-exit /b 1
+if not exist "%OUT%" exit /b 1
+call :reject_empty "%OUT%"
+if not exist "%OUT%" exit /b 1
+exit /b 0
+
+:reject_empty
+set "FILE=%~1"
+if not exist "%FILE%" exit /b 0
+for %%A in ("%FILE%") do if %%~zA LSS 1024 (
+    echo Removing empty or truncated download: %FILE%
+    del /f /q "%FILE%" 2>nul
+)
+exit /b 0
 
 :check_exe
 set "EXE=%~1"
